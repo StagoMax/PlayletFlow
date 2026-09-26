@@ -1,0 +1,63 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #eef1f8;
+  background: #080a10;
+  font-synthesis: none;
+
+  /* Existing workspace colors are the source for the shared UI language. */
+  --bg: #080a10;
+  --panel: #0e111a;
+  --panel-raised: #151925;
+  --panel-soft: #111520;
+  --line: #252a39;
+  --line-strong: #363d50;
+  --line-subtle: rgba(255, 255, 255, .08);
+  --border: var(--line-strong);
+  --text: #eef1f8;
+  --text-secondary: #abb3c6;
+  --text-muted: #8590a5;
+  --scrollbar-thumb: #555e74;
+  --scrollbar-thumb-hover: #737f99;
+  --accent: #8293ff;
+  --accent-strong: #9d79ff;
+  --accent-soft: rgba(130, 147, 255, .14);
+  --positive: #77d6b2;
+  --warning: #f4bd62;
+  --danger: #ff8f9a;
+
+  --surface-overlay: #171c26;
+  --surface-input: #11151f;
+  --surface-control: #242a38;
+  --surface-control-hover: #2c3445;
+  --surface-input-hover: #151a25;
+  --action-primary: #aeb7ff;
+  --action-primary-hover: #c3caff;
+  --text-on-primary: #10131c;
+  --focus-ring: #aeb8ff;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+
+  --font-size-caption: 12px;
+  --font-size-label: 13px;
+  --font-size-body: 14px;
+  --font-size-dialog-title: 18px;
+  --font-size-page-title: 22px;
+  --line-height-body: 1.5;
+
+  --control-height: 40px;
+  --motion-fast: 160ms;
+  --motion-standard: 220ms;
+  --shadow-control: 0 1px 3px rgba(0, 0, 0, .16);
+  --shadow-overlay: 0 18px 48px rgba(0, 0, 0, .38);
+}

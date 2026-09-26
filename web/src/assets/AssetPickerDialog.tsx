@@ -142,7 +142,7 @@ export function AssetPickerDialog({
                 <label key={asset.id} className={`asset-picker-card${selected.has(asset.id) ? " is-selected" : ""}${bound ? " is-disabled" : ""}`}>
                   <input type="checkbox" checked={selected.has(asset.id)} disabled={bound} onChange={() => toggle(asset.id)} />
                   <span className="asset-picker-card__preview" aria-hidden="true">{preview}</span>
-                  <span><strong>{asset.name}</strong><small>{assetKindLabel(asset.type)} · 被 {asset.referenceCount} 个分镜使用</small></span>
+                  <span><strong>{asset.name}</strong><small>{assetKindLabel(asset.type)} · 被 {asset.referenceCount} 个片段使用</small></span>
                   {bound ? <em>已添加</em> : null}
                 </label>
               );

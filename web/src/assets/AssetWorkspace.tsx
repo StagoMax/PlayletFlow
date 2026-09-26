@@ -82,8 +82,8 @@ export function AssetWorkspace(props: AssetWorkspaceProps) {
   if (status === "error") return <div className="asset-workspace-state" role="alert"><strong>资产加载失败</strong><p>{error}</p><button type="button" onClick={() => setReloadToken((value) => value + 1)}>重试</button></div>;
 
   return (
-    <section className="asset-workspace" aria-label="当前分镜资产">
-      <header className="asset-workspace__header"><div><strong>资产</strong><small>{bindings.length} 个共享资产引用</small></div><button type="button" onClick={() => setCopyOpen(true)} disabled={bindings.length === 0}>复制到其他分镜</button></header>
+    <section className="asset-workspace" aria-label="当前片段资产">
+      <header className="asset-workspace__header"><div><strong>资产</strong><small>{bindings.length} 个共享资产引用</small></div><button type="button" onClick={() => setCopyOpen(true)} disabled={bindings.length === 0}>复制到其他片段</button></header>
       {error ? <p role="alert" className="asset-dialog__error">{error}</p> : null}
       <AssetSectionTree
         sections={sections}
