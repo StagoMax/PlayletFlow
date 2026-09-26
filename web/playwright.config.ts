@@ -1,4 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const fixtureDbBase = join(tmpdir(), `videoflow-e2e-${process.pid}-${Date.now()}`);
 
 export default defineConfig({
   testDir: "./e2e",
@@ -25,8 +29,8 @@ export default defineConfig({
       reuseExistingServer: false,
       env: {
         VIDEOFLOW_PORT: "8789",
-        VIDEOFLOW_DB: ".e2e/conversations.sqlite",
-        VIDEOFLOW_PRODUCT_DB: ".e2e/product.sqlite",
+        VIDEOFLOW_DB: `${fixtureDbBase}-conversations.sqlite`,
+        VIDEOFLOW_PRODUCT_DB: `${fixtureDbBase}-product.sqlite`,
       },
     },
     {
