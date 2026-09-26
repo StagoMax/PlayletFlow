@@ -249,7 +249,7 @@ fn completion_target(tx: &Transaction<'_>, job: &GenerationJob) -> ProductResult
                         storyboard_id: Some(job.storyboard_id.to_string()),
                         kind: MediaKind::Image,
                         role: MediaRole::AssetView,
-                        name: format!("{} · 分镜派生图", row.get::<_, String>(0)?),
+                        name: format!("{} · 片段派生图", row.get::<_, String>(0)?),
                         prompt: row.get(1)?,
                     })
                 },

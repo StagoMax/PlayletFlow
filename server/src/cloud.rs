@@ -1,6 +1,6 @@
 use crate::{
-    cloud_generation, conversation_events::conversation_payload, history, rate_limit::RateLimiter,
-    runtime,
+    cloud_generation, conversation_events::conversation_payload,
+    conversation_references::message_model_text, history, rate_limit::RateLimiter, runtime,
 };
 use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, State};
@@ -311,15 +311,7 @@ async fn prepare_turn(
         started.elapsed().as_millis()
     );
     let user = request.message;
-    let content = user
-        .parts
-        .iter()
-        .filter_map(|part| match part {
-            opentopia_core::model::MessagePart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let content = message_model_text(&user.parts);
     let turn_id = Uuid::new_v4();
     let history = history::project_history(&request.messages, &request.events);
     let next_seq = request.events.last().map_or(0, |event| event.seq) + 1;
@@ -338,16 +330,7 @@ async fn prepare_turn(
 }
 
 fn validate(request: &TurnRequest) -> Result<(), &'static str> {
-    let content = request
-        .message
-        .parts
-        .iter()
-        .filter_map(|part| match part {
-            opentopia_core::model::MessagePart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let content = message_model_text(&request.message.parts);
     if content.trim().is_empty() || content.chars().count() > 2_000 {
         return Err("message must contain 1 to 2000 characters");
     }

@@ -1,6 +1,8 @@
 use super::idempotency::IdempotencyContext;
+use crate::conversation_references::WorkspaceReference;
 use crate::product::domain::{
-    ProductError, ProductResult, ProjectId, StoryboardId, WorkspaceThreadBinding,
+    GenerationInputSelection, ProductError, ProductResult, ProjectId, StoryboardId,
+    WorkspaceThreadBinding,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -51,6 +53,21 @@ pub struct StoryboardMediaContext {
     pub revision: i64,
 }
 
+/// A scoped, current snapshot of a resource that tools may search or read.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoryboardResource {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub role: Option<String>,
+    pub content: Option<String>,
+    pub status: Option<String>,
+    pub revision: i64,
+    pub editable: bool,
+    pub generation_input: Option<GenerationInputSelection>,
+}
+
 #[async_trait]
 pub trait WorkspaceThreadStore: Send + Sync {
     async fn validate_scope(
@@ -88,6 +105,14 @@ pub trait WorkspaceThreadStore: Send + Sync {
     ) -> ProductResult<WorkspaceThreadBinding>;
 
     async fn load_context(&self, thread_id: Uuid) -> ProductResult<Option<StoryboardContext>>;
+
+    async fn list_resources(&self, thread_id: Uuid) -> ProductResult<Vec<StoryboardResource>>;
+
+    async fn resolve_references(
+        &self,
+        thread_id: Uuid,
+        reference_ids: &[String],
+    ) -> ProductResult<Vec<WorkspaceReference>>;
 }
 
 #[async_trait]
@@ -155,7 +180,7 @@ impl WorkspaceThreadService {
         self.store.validate_scope(project_id, storyboard_id).await?;
         let thread_id = self
             .runtime
-            .create_thread(format!("分镜 · {storyboard_id}"))
+            .create_thread(format!("片段 · {storyboard_id}"))
             .await?;
         self.store
             .bind(
@@ -187,5 +212,15 @@ impl WorkspaceThreadService {
         serde_json::to_string(&context)
             .map(Some)
             .map_err(|error| ProductError::Storage(error.to_string()))
+    }
+
+    pub async fn resolve_references(
+        &self,
+        thread_id: Uuid,
+        reference_ids: &[String],
+    ) -> ProductResult<Vec<WorkspaceReference>> {
+        self.store
+            .resolve_references(thread_id, reference_ids)
+            .await
     }
 }

@@ -13,6 +13,7 @@ pub struct CreateProposal {
     pub storyboard_id: StoryboardId,
     pub target: ProposalTarget,
     pub proposed_value: String,
+    pub proposed_input: Option<crate::product::domain::GenerationInputSelection>,
     pub summary: String,
     pub source: ProposalSource,
 }
@@ -190,6 +191,11 @@ fn validate_create(command: &CreateProposal) -> ProductResult<()> {
             "script proposal target must be the current storyboard".into(),
         ));
     }
+    if matches!(command.target, ProposalTarget::Script { .. }) && command.proposed_input.is_some() {
+        return Err(ProductError::Validation(
+            "script proposals cannot contain generation inputs".into(),
+        ));
+    }
     let max_length = if matches!(command.target, ProposalTarget::Script { .. }) {
         20_000
     } else {
@@ -239,6 +245,7 @@ mod tests {
             storyboard_id,
             target: ProposalTarget::Script { storyboard_id },
             proposed_value: " ".into(),
+            proposed_input: None,
             summary: "summary".into(),
             source: ProposalSource {
                 thread_id: Uuid::new_v4(),

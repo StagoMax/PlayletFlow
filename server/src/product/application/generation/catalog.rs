@@ -5,7 +5,7 @@ use crate::product::domain::{
 use serde::Serialize;
 use std::collections::HashSet;
 
-pub const DEFAULT_IMAGE_MODEL: &str = "doubao-seedream-4-0-250828";
+pub const DEFAULT_IMAGE_MODEL: &str = "doubao-seedream-5-0-260128";
 pub const DEFAULT_VIDEO_MODEL: &str = "doubao-seedance-2-0-mini-260615";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -23,43 +23,7 @@ pub struct GenerationModel {
 const MODELS: &[GenerationModel] = &[
     GenerationModel {
         id: DEFAULT_IMAGE_MODEL,
-        label: "Seedream 4.0 · 省钱",
-        kind: MediaKind::Image,
-        supports_first_last_frames: false,
-        max_reference_images: 14,
-        min_duration_seconds: None,
-        max_duration_seconds: None,
-    },
-    GenerationModel {
-        id: "doubao-seedream-5-0-pro-260628",
-        label: "Seedream 5.0 Pro",
-        kind: MediaKind::Image,
-        supports_first_last_frames: false,
-        max_reference_images: 10,
-        min_duration_seconds: None,
-        max_duration_seconds: None,
-    },
-    GenerationModel {
-        id: "doubao-seedream-5-0-flash-260915",
-        label: "Seedream 5.0 Flash",
-        kind: MediaKind::Image,
-        supports_first_last_frames: false,
-        max_reference_images: 10,
-        min_duration_seconds: None,
-        max_duration_seconds: None,
-    },
-    GenerationModel {
-        id: "doubao-seedream-5-0-260128",
-        label: "Seedream 5.0",
-        kind: MediaKind::Image,
-        supports_first_last_frames: false,
-        max_reference_images: 14,
-        min_duration_seconds: None,
-        max_duration_seconds: None,
-    },
-    GenerationModel {
-        id: "doubao-seedream-4-5-251128",
-        label: "Seedream 4.5",
+        label: "Seedream 5.0 Lite",
         kind: MediaKind::Image,
         supports_first_last_frames: false,
         max_reference_images: 14,
@@ -68,48 +32,12 @@ const MODELS: &[GenerationModel] = &[
     },
     GenerationModel {
         id: DEFAULT_VIDEO_MODEL,
-        label: "Seedance 2.0 Mini · 省钱",
+        label: "Seedance 2.0 Mini",
         kind: MediaKind::Video,
         supports_first_last_frames: true,
         max_reference_images: 9,
         min_duration_seconds: Some(4),
         max_duration_seconds: Some(15),
-    },
-    GenerationModel {
-        id: "doubao-seedance-2-5-260628",
-        label: "Seedance 2.5",
-        kind: MediaKind::Video,
-        supports_first_last_frames: true,
-        max_reference_images: 30,
-        min_duration_seconds: Some(4),
-        max_duration_seconds: Some(30),
-    },
-    GenerationModel {
-        id: "doubao-seedance-2-0-260128",
-        label: "Seedance 2.0",
-        kind: MediaKind::Video,
-        supports_first_last_frames: true,
-        max_reference_images: 9,
-        min_duration_seconds: Some(4),
-        max_duration_seconds: Some(15),
-    },
-    GenerationModel {
-        id: "doubao-seedance-2-0-fast-260128",
-        label: "Seedance 2.0 Fast",
-        kind: MediaKind::Video,
-        supports_first_last_frames: true,
-        max_reference_images: 9,
-        min_duration_seconds: Some(4),
-        max_duration_seconds: Some(15),
-    },
-    GenerationModel {
-        id: "doubao-seedance-1-0-pro-250528",
-        label: "Seedance 1.0 Pro",
-        kind: MediaKind::Video,
-        supports_first_last_frames: true,
-        max_reference_images: 0,
-        min_duration_seconds: Some(2),
-        max_duration_seconds: Some(12),
     },
 ];
 
@@ -180,9 +108,9 @@ fn resolve_video(
         ));
     }
     let resolution = options.video_resolution.unwrap_or_else(|| "480p".into());
-    if !matches!(resolution.as_str(), "480p" | "720p" | "1080p") {
+    if !matches!(resolution.as_str(), "480p" | "720p") {
         return Err(ProductError::Validation(
-            "videoResolution must be 480p, 720p, or 1080p".into(),
+            "Seedance 2.0 Mini videoResolution must be 480p or 720p".into(),
         ));
     }
     let first_last = matches!(
@@ -223,11 +151,12 @@ fn resolve_video(
 }
 
 fn validate_inputs(model: &GenerationModel, input: &GenerationInputSelection) -> ProductResult<()> {
-    let ids = input.media_ids();
-    if ids.len() != ids.iter().copied().collect::<HashSet<_>>().len() {
-        return Err(ProductError::Validation(
-            "generation input media IDs must be unique".into(),
-        ));
+    if let GenerationInputSelection::ReferenceImages { media_ids } = input {
+        if media_ids.len() != media_ids.iter().copied().collect::<HashSet<_>>().len() {
+            return Err(ProductError::Validation(
+                "reference image media IDs must be unique".into(),
+            ));
+        }
     }
     match input {
         GenerationInputSelection::TextOnly => Ok(()),
@@ -289,14 +218,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_seedance_rejects_reference_images() {
+    fn non_fixed_model_is_rejected() {
         let result = resolve_generation_spec(
             MediaKind::Video,
             Some(GenerationOptions {
                 model: Some("doubao-seedance-1-0-pro-250528".into()),
-                input: GenerationInputSelection::ReferenceImages {
-                    media_ids: vec![MediaId::new()],
-                },
                 ..GenerationOptions::default()
             }),
         );

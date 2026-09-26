@@ -1,12 +1,12 @@
-use opentopia_core::model::{
-    AgentEvent, AgentEventPayload, Message, MessagePart, MessageRole, ToolResult,
-};
+use opentopia_core::model::{AgentEvent, AgentEventPayload, Message, MessageRole, ToolResult};
 use opentopia_core::provider::{
     ModelConversationMessage, ModelConversationRole, ProviderToolCall, ProviderToolResult,
 };
 use opentopia_core::tool_result_is_error;
 use std::collections::HashMap;
 use uuid::Uuid;
+
+use crate::conversation_references::message_model_text;
 
 /// Rebuild the provider transcript from durable messages and canonical tool
 /// events. The browser can keep its compact projection independently.
@@ -38,15 +38,7 @@ pub fn project_history(
             MessageRole::Assistant => ModelConversationRole::Assistant,
             MessageRole::System | MessageRole::Tool => continue,
         };
-        let content = message
-            .parts
-            .iter()
-            .filter_map(|part| match part {
-                MessagePart::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let content = message_model_text(&message.parts);
         if !content.is_empty() {
             projected.push(ModelConversationMessage {
                 role,

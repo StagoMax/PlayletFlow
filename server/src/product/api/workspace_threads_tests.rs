@@ -1,6 +1,6 @@
 use super::*;
 use crate::product::application::workspace_threads::RuntimeThreadGateway;
-use crate::product::domain::{ProductResult, WorkspaceThreadBinding};
+use crate::product::domain::{ProductError, ProductResult, WorkspaceThreadBinding};
 use crate::product::infrastructure::sqlite::{
     demo_storyboard_id, seed_demo_workspace, ProductDatabase, SqliteWorkspaceThreadStore,
     DEMO_PROJECT_ID,
@@ -176,4 +176,36 @@ async fn model_context_is_derived_from_the_bound_storyboard_only() {
     assert!(context.contains("50000000-0000-4000-8000-000000000012"));
     assert!(context.contains("生成版本 03"));
     assert!(!context.contains("雾港建立镜头"));
+}
+
+#[tokio::test]
+async fn references_resolve_to_canonical_resources_inside_the_bound_storyboard() {
+    let app = TestApp::new();
+    let (_, body) = app
+        .send("POST", &route(12), Some("reference-resolution-thread-key"))
+        .await;
+    let binding: WorkspaceThreadBinding = serde_json::from_value(body.unwrap()).unwrap();
+    let script_id = format!("script-{}", demo_storyboard_id(12));
+    let references = app
+        .service
+        .resolve_references(
+            binding.thread_id,
+            &[script_id.clone(), "video-draft-12".into()],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(references.len(), 2);
+    assert_eq!(references[0].id, script_id);
+    assert_eq!(references[0].name, "片段脚本");
+    assert_eq!(references[0].kind, "text");
+    assert_eq!(references[1].id, "video-draft-12");
+    assert_eq!(references[1].name, "生成版本 03");
+    assert_eq!(references[1].kind, "video");
+
+    let outside_scope = app
+        .service
+        .resolve_references(binding.thread_id, &["video-draft-11".into()])
+        .await;
+    assert!(matches!(outside_scope, Err(ProductError::NotFound)));
 }

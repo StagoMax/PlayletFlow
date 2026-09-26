@@ -235,7 +235,7 @@ async fn direct_media_generation_updates_prompt_and_queues_one_idempotent_job() 
         assert_eq!(body["proposalId"], Value::Null);
         assert_eq!(body["status"], "waitingForProvider");
         assert_eq!(body["targetRevision"], 3);
-        assert_eq!(body["spec"]["model"], "doubao-seedream-4-0-250828");
+        assert_eq!(body["spec"]["model"], "doubao-seedream-5-0-260128");
         if let Some(existing) = &job_id {
             assert_eq!(body["id"], *existing);
         } else {

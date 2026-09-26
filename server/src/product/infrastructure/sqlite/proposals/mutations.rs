@@ -4,8 +4,9 @@ use crate::product::application::proposals::{
     AppliedTarget, ApplyProposalResult, CreateProposal, ProposalListQuery, ResolveProposal,
 };
 use crate::product::domain::{
-    ChangeProposal, GenerationJob, GenerationJobId, GenerationSpec, GenerationStatus, MediaKind,
-    ProductError, ProductResult, ProjectId, ProposalId, ProposalStatus, ProposalTarget,
+    ChangeProposal, GenerationJob, GenerationJobId, GenerationOptions, GenerationSpec,
+    GenerationStatus, MediaKind, ProductError, ProductResult, ProjectId, ProposalId,
+    ProposalStatus, ProposalTarget,
 };
 use crate::product::infrastructure::sqlite::generation::storage as generation_storage;
 use crate::product::infrastructure::sqlite::support::{append_event, immediate, remember, replay};
@@ -24,6 +25,7 @@ pub(super) fn create(
             && existing.storyboard_id == command.storyboard_id
             && existing.target == command.target
             && existing.proposed_value == command.proposed_value
+            && existing.proposed_input == command.proposed_input
             && existing.summary == command.summary
             && existing.source.turn_id == command.source.turn_id
         {
@@ -39,6 +41,27 @@ pub(super) fn create(
         &command.target,
     )?
     .ok_or(ProductError::NotFound)?;
+    if let Some(input) = &command.proposed_input {
+        let kind = match command.target {
+            ProposalTarget::MediaPrompt { media_id } => {
+                target::media_kind(&tx, command.project_id, command.storyboard_id, media_id)?
+            }
+            ProposalTarget::AssetBindingPrompt { .. } => MediaKind::Image,
+            ProposalTarget::Script { .. } => {
+                return Err(ProductError::Validation(
+                    "script proposals cannot contain generation inputs".into(),
+                ));
+            }
+        };
+        let spec = resolve_generation_spec(
+            kind,
+            Some(GenerationOptions {
+                input: input.clone(),
+                ..GenerationOptions::default()
+            }),
+        )?;
+        generation_storage::validate_inputs(&tx, command.project_id, command.storyboard_id, &spec)?;
+    }
     let proposal = ChangeProposal {
         id: ProposalId::new(),
         project_id: command.project_id,
@@ -47,6 +70,7 @@ pub(super) fn create(
         base_revision: snapshot.revision,
         before_value: snapshot.value,
         proposed_value: command.proposed_value,
+        proposed_input: command.proposed_input,
         summary: command.summary,
         status: ProposalStatus::Pending,
         source: command.source,
@@ -158,8 +182,19 @@ pub(super) fn apply(
     }
     let generation_spec = if proposal.target.creates_generation_job() {
         let kind = generation_kind(&tx, &proposal)?;
-        let spec = resolve_generation_spec(kind, command.generation_options.clone())?;
-        generation_storage::validate_inputs(&tx, proposal.project_id, &spec)?;
+        let mut options = command.generation_options.clone().unwrap_or_default();
+        if command.generation_options.is_none() {
+            if let Some(input) = &proposal.proposed_input {
+                options.input = input.clone();
+            }
+        }
+        let spec = resolve_generation_spec(kind, Some(options))?;
+        generation_storage::validate_inputs(
+            &tx,
+            proposal.project_id,
+            proposal.storyboard_id,
+            &spec,
+        )?;
         Some(spec)
     } else {
         if command.generation_options.is_some() {

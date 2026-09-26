@@ -53,6 +53,7 @@ impl ProposalFixture {
             storyboard_id: self.storyboard_id,
             target,
             proposed_value: proposed_value.into(),
+            proposed_input: None,
             summary: "AI suggested a focused change".into(),
             source: ProposalSource {
                 thread_id: Uuid::new_v4(),

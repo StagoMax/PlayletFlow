@@ -181,6 +181,7 @@ struct ProposalResponse {
     base_revision: i64,
     before_value: String,
     proposed_value: String,
+    proposed_input: Option<crate::product::domain::GenerationInputSelection>,
     summary: String,
     status: ProposalStatus,
     source: ProposalSourceResponse,
@@ -199,6 +200,7 @@ impl From<ChangeProposal> for ProposalResponse {
             base_revision: value.base_revision,
             before_value: value.before_value,
             proposed_value: value.proposed_value,
+            proposed_input: value.proposed_input,
             summary: value.summary,
             status: value.status,
             source: value.source.into(),
@@ -376,6 +378,7 @@ mod tests {
                     storyboard_id: self.storyboard_id,
                 },
                 proposed_value: value.into(),
+                proposed_input: None,
                 summary: "API proposal".into(),
                 source: ProposalSource {
                     thread_id: Uuid::new_v4(),

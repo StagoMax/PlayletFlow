@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 const COLUMNS: &str = "id, project_id, storyboard_id, target_type, target_id, base_revision, \
     before_value, proposed_value, summary, status, source_thread_id, source_turn_id, \
-    source_tool_call_id, revision, created_at, resolved_at";
+    source_tool_call_id, revision, created_at, resolved_at, proposed_input_json";
 
 pub(super) fn find_raw(
     connection: &Connection,
@@ -70,8 +70,8 @@ pub(super) fn insert(tx: &Transaction<'_>, proposal: &ChangeProposal) -> Product
         "INSERT INTO change_proposals \
          (id, project_id, storyboard_id, target_type, target_id, base_revision, before_value, \
           proposed_value, summary, status, source_thread_id, source_turn_id, source_tool_call_id, \
-          revision, created_at, resolved_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+          revision, created_at, resolved_at, proposed_input_json) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             proposal.id.to_string(),
             proposal.project_id.to_string(),
@@ -89,6 +89,12 @@ pub(super) fn insert(tx: &Transaction<'_>, proposal: &ChangeProposal) -> Product
             proposal.revision,
             proposal.created_at.to_rfc3339(),
             proposal.resolved_at.map(|value| value.to_rfc3339()),
+            proposal
+                .proposed_input
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|error| ProductError::Storage(error.to_string()))?,
         ],
     )?;
     Ok(())
@@ -153,6 +159,18 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<ChangeProposal> {
         base_revision: row.get(5)?,
         before_value: row.get(6)?,
         proposed_value: row.get(7)?,
+        proposed_input: row
+            .get::<_, Option<String>>(16)?
+            .map(|value| {
+                serde_json::from_str(&value).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        16,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })
+            })
+            .transpose()?,
         summary: row.get(8)?,
         status,
         source: ProposalSource {

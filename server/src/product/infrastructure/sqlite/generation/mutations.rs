@@ -42,7 +42,7 @@ pub(super) fn request_media(
         command.media_id,
     )?;
     let spec = resolve_generation_spec(kind, command.generation_options)?;
-    storage::validate_inputs(&tx, command.project_id, &spec)?;
+    storage::validate_inputs(&tx, command.project_id, command.storyboard_id, &spec)?;
     let target_revision = target::apply(
         &tx,
         command.project_id,

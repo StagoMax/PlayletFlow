@@ -20,36 +20,56 @@ struct ToolFixture {
 }
 
 impl ToolFixture {
-    fn new(storyboard_index: usize) -> Self {
+    fn new() -> Self {
         let path =
             std::env::temp_dir().join(format!("videoflow-product-tools-{}.sqlite", Uuid::new_v4()));
-        let database = ProductDatabase::open(&path).expect("open product tool database");
-        seed_demo_workspace(&database).expect("seed product tool fixture");
+        let database = ProductDatabase::open(&path).unwrap();
+        seed_demo_workspace(&database).unwrap();
         let thread_id = Uuid::new_v4();
         let turn_id = Uuid::new_v4();
-        database
-            .connect()
-            .unwrap()
+        let connection = database.connect().unwrap();
+        connection
             .execute(
-                "INSERT INTO workspace_thread_bindings
-                 (thread_id, project_id, storyboard_id, created_at)
-                 VALUES (?1, ?2, ?3, '2026-09-26T00:00:00Z')",
+                "INSERT INTO workspace_thread_bindings \
+             (thread_id, project_id, storyboard_id, created_at) \
+             VALUES (?1, ?2, ?3, '2026-09-26T00:00:00Z')",
                 params![
                     thread_id.to_string(),
                     DEMO_PROJECT_ID,
-                    demo_storyboard_id(storyboard_index)
+                    demo_storyboard_id(12)
                 ],
             )
             .unwrap();
-
+        for (prefix, storyboard) in [(7, 12), (8, 12), (7, 1)] {
+            connection
+                .execute(
+                    "INSERT INTO media_items \
+                 (id, project_id, storyboard_id, kind, role, name, prompt, mime_type, \
+                  source_object_key, status, revision, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, 'image', 'keyframe', ?4, '参考画面', \
+                         'image/png', ?5, 'ready', 1, ?6, ?6)",
+                    params![
+                        fixture_id(prefix, storyboard).to_string(),
+                        DEMO_PROJECT_ID,
+                        demo_storyboard_id(storyboard),
+                        format!("参考图 {prefix}"),
+                        format!("fixture/{prefix}-{storyboard}.png"),
+                        "2026-09-26T00:00:00Z",
+                    ],
+                )
+                .unwrap();
+        }
+        drop(connection);
         let workspace_store: Arc<dyn WorkspaceThreadStore> =
             Arc::new(SqliteWorkspaceThreadStore::new(database.clone()));
         let proposals =
             ProposalService::new(Arc::new(SqliteProposalRepository::new(database.clone())));
-        let scope = WorkspaceThreadScopeResolver::new(workspace_store);
         let mut registry = ToolRegistry::default();
-        register_product_tools(&mut registry, proposals, scope);
-
+        register_product_tools(
+            &mut registry,
+            proposals,
+            WorkspaceThreadScopeResolver::new(workspace_store),
+        );
         Self {
             database,
             path,
@@ -74,22 +94,16 @@ impl ToolFixture {
     }
 
     fn tool(&self, name: &str) -> Arc<dyn Tool> {
-        self.registry.get(name).expect("registered product tool")
+        self.registry.get(name).unwrap()
     }
 
-    fn scalar_i64(&self, sql: &str) -> i64 {
+    fn count(&self, table: &str) -> i64 {
         self.database
             .connect()
             .unwrap()
-            .query_row(sql, [], |row| row.get(0))
-            .unwrap()
-    }
-
-    fn scalar_string(&self, sql: &str) -> String {
-        self.database
-            .connect()
-            .unwrap()
-            .query_row(sql, [], |row| row.get(0))
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
             .unwrap()
     }
 }
@@ -114,183 +128,308 @@ fn fixture_id(prefix: u8, storyboard_index: usize) -> Uuid {
 }
 
 #[test]
-fn tool_contracts_do_not_accept_model_selected_workspace_scope() {
-    let fixture = ToolFixture::new(12);
+fn only_storyboard_tools_are_registered() {
+    let fixture = ToolFixture::new();
     assert_eq!(
         fixture.registry.list(),
         vec![
-            MEDIA_PROMPT_TOOL_NAME.to_owned(),
-            SCRIPT_TOOL_NAME.to_owned()
+            IMAGE_TOOL_NAME,
+            TEXT_TOOL_NAME,
+            VIDEO_TOOL_NAME,
+            READ_TOOL_NAME,
+            SEARCH_TOOL_NAME,
         ]
     );
-
-    let script = fixture.tool(SCRIPT_TOOL_NAME);
-    let script_schema = script.schema();
-    assert_eq!(script_schema["additionalProperties"], false);
-    assert!(script_schema["properties"].get("projectId").is_none());
-    assert!(script_schema["properties"].get("storyboardId").is_none());
-    assert!(script
-        .input_error(&json!({
-            "projectId": Uuid::new_v4(),
-            "storyboardId": Uuid::new_v4(),
-            "proposedText": "replacement",
-            "summary": "scope injection"
-        }))
-        .is_some());
-
-    let prompt = fixture.tool(MEDIA_PROMPT_TOOL_NAME);
-    assert_eq!(
-        prompt.schema()["properties"]["targetType"]["enum"],
-        json!(["media", "assetBinding"])
-    );
-    let policy = prompt.execution_policy(&ToolCall::new(MEDIA_PROMPT_TOOL_NAME, json!({})));
-    assert!(policy.idempotent);
-    assert!(!policy.read_only);
-    assert!(!policy.parallel_safe);
+    for name in fixture.registry.list() {
+        let schema = fixture.tool(&name).schema();
+        assert_eq!(schema["additionalProperties"], false);
+        assert!(schema["properties"].get("projectId").is_none());
+        assert!(schema["properties"].get("storyboardId").is_none());
+    }
 }
 
 #[tokio::test]
-async fn script_tool_creates_one_pending_proposal_without_changing_script() {
-    let fixture = ToolFixture::new(12);
-    let tool = fixture.tool(SCRIPT_TOOL_NAME);
+async fn search_and_read_are_scoped_to_the_bound_storyboard() {
+    let fixture = ToolFixture::new();
+    let search = fixture
+        .tool(SEARCH_TOOL_NAME)
+        .execute(
+            ToolCall::new(SEARCH_TOOL_NAME, json!({"query":"参考图","kind":"image"})),
+            fixture.context(fixture.thread_id),
+        )
+        .await
+        .unwrap();
+    let result: Value = serde_json::from_str(&search.output).unwrap();
+    assert_eq!(result["total"], 2);
+    assert!(result["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| item["revision"] == 1));
+
+    let read = fixture
+        .tool(READ_TOOL_NAME)
+        .execute(
+            ToolCall::new(
+                READ_TOOL_NAME,
+                json!({"kind":"text","id":demo_storyboard_id(12)}),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await
+        .unwrap();
+    let text: Value = serde_json::from_str(&read.output).unwrap();
+    assert!(text["content"].as_str().unwrap().contains("桥下短暂对峙"));
+
+    let denied = fixture
+        .tool(READ_TOOL_NAME)
+        .execute(
+            ToolCall::new(
+                READ_TOOL_NAME,
+                json!({"kind":"image","id":fixture_id(7, 1)}),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await;
+    assert!(denied.is_err());
+    let unbound = fixture
+        .tool(SEARCH_TOOL_NAME)
+        .execute(
+            ToolCall::new(SEARCH_TOOL_NAME, json!({})),
+            fixture.context(Uuid::new_v4()),
+        )
+        .await;
+    assert!(unbound.is_err());
+}
+
+#[tokio::test]
+async fn text_patch_creates_one_pending_proposal_without_editing_script() {
+    let fixture = ToolFixture::new();
     let call = ToolCall::new(
-        SCRIPT_TOOL_NAME,
+        TEXT_TOOL_NAME,
         json!({
-            "proposedText": "雨幕下，林舟停下并重新确认信号。",
-            "summary": "收紧开场节奏"
+            "targetId":demo_storyboard_id(12),"baseRevision":1,
+            "oldText":"林舟停在桥下短暂对峙的入口",
+            "newText":"林舟停在桥下，确认对方的位置",
+            "summary":"收紧开场节奏"
         }),
     );
-
-    let first = tool
+    let tool = fixture.tool(TEXT_TOOL_NAME);
+    let result = tool
         .execute(call.clone(), fixture.context(fixture.thread_id))
         .await
         .unwrap();
     let replay = tool
-        .execute(call.clone(), fixture.context(fixture.thread_id))
+        .execute(call, fixture.context(fixture.thread_id))
         .await
         .unwrap();
-    let output: Value = serde_json::from_str(&first.output).unwrap();
-    let replay_output: Value = serde_json::from_str(&replay.output).unwrap();
-
-    assert_eq!(first.call_id, call.id);
-    assert_eq!(output["proposalId"], replay_output["proposalId"]);
-    assert_eq!(output["status"], "pending");
-    assert_eq!(output["targetType"], "script");
-    assert_eq!(output["baseRevision"], 1);
-    assert_eq!(
-        fixture.scalar_i64("SELECT COUNT(*) FROM change_proposals"),
-        1
-    );
-    assert_eq!(
-        fixture.scalar_string(
-            "SELECT text FROM storyboard_scripts WHERE storyboard_id =
-             '20000000-0000-4000-8000-000000000012'"
-        ),
-        "雨水打在金属顶棚上。林舟停在桥下短暂对峙的入口，确认终端上闪烁的坐标后继续向前。镜头从环境全景缓慢推进到她手中的信号终端。"
-    );
-    assert_eq!(
-        fixture.scalar_string("SELECT source_thread_id FROM change_proposals LIMIT 1"),
-        fixture.thread_id.to_string()
-    );
-    assert_eq!(
-        fixture.scalar_string("SELECT source_turn_id FROM change_proposals LIMIT 1"),
-        fixture.turn_id.to_string()
-    );
+    let first: Value = serde_json::from_str(&result.output).unwrap();
+    let second: Value = serde_json::from_str(&replay.output).unwrap();
+    assert_eq!(first["proposalId"], second["proposalId"]);
+    assert_eq!(first["targetType"], "script");
+    assert_eq!(fixture.count("change_proposals"), 1);
+    let script: String = fixture
+        .database
+        .connect()
+        .unwrap()
+        .query_row(
+            "SELECT text FROM storyboard_scripts WHERE storyboard_id = ?1",
+            [demo_storyboard_id(12)],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(script.contains("林舟停在桥下短暂对峙的入口"));
 }
 
 #[tokio::test]
-async fn prompt_tool_rejects_unbound_or_cross_storyboard_targets() {
-    let fixture = ToolFixture::new(12);
-    let tool = fixture.tool(MEDIA_PROMPT_TOOL_NAME);
-    let cross_storyboard = ToolCall::new(
-        MEDIA_PROMPT_TOOL_NAME,
-        json!({
-            "targetType": "media",
-            "targetId": fixture_id(6, 1),
-            "proposedPrompt": "不应写入的越权提示词",
-            "summary": "越权尝试"
-        }),
-    );
-    let error = tool
-        .execute(cross_storyboard, fixture.context(fixture.thread_id))
-        .await
-        .expect_err("another storyboard's media must be rejected");
-    assert!(error.to_string().contains("resource not found"));
-
-    let unbound = ToolCall::new(
-        MEDIA_PROMPT_TOOL_NAME,
-        json!({
-            "targetType": "media",
-            "targetId": fixture_id(6, 12),
-            "proposedPrompt": "没有绑定的线程也不能写入",
-            "summary": "伪造线程"
-        }),
-    );
-    let error = tool
-        .execute(unbound, fixture.context(Uuid::new_v4()))
-        .await
-        .expect_err("unbound threads must be rejected");
-    assert!(error.to_string().contains("resource not found"));
-    assert_eq!(
-        fixture.scalar_i64("SELECT COUNT(*) FROM change_proposals"),
-        0
-    );
-}
-
-#[tokio::test]
-async fn prompt_tool_accepts_media_and_asset_bindings_from_bound_storyboard_only() {
-    let fixture = ToolFixture::new(12);
-    let tool = fixture.tool(MEDIA_PROMPT_TOOL_NAME);
-
-    let media = tool
+async fn image_and_video_prompt_inputs_are_saved_and_checked() {
+    let fixture = ToolFixture::new();
+    let image = fixture
+        .tool(IMAGE_TOOL_NAME)
         .execute(
             ToolCall::new(
-                MEDIA_PROMPT_TOOL_NAME,
+                IMAGE_TOOL_NAME,
                 json!({
-                    "targetType": "media",
-                    "targetId": fixture_id(6, 12),
-                    "proposedPrompt": "镜头贴近人物，雨滴形成前景散景",
-                    "summary": "加强镜头纵深"
+                    "targetType":"assetBinding","targetId":fixture_id(5, 12),"baseRevision":1,
+                    "proposedPrompt":"深蓝风衣，参考图片 1 的雨夜光线",
+                    "input":{"type":"referenceImages","mediaIds":[fixture_id(7, 12)]},
+                    "summary":"统一人物光线"
                 }),
             ),
             fixture.context(fixture.thread_id),
         )
         .await
         .unwrap();
-    let media_output: Value = serde_json::from_str(&media.output).unwrap();
-    assert_eq!(media_output["targetType"], "mediaPrompt");
+    let image_result: Value = serde_json::from_str(&image.output).unwrap();
+    assert_eq!(
+        image_result["proposedInput"]["mediaIds"][0],
+        fixture_id(7, 12).to_string()
+    );
 
-    let binding = tool
+    let video = fixture
+        .tool(VIDEO_TOOL_NAME)
         .execute(
             ToolCall::new(
-                MEDIA_PROMPT_TOOL_NAME,
+                VIDEO_TOOL_NAME,
                 json!({
-                    "targetType": "assetBinding",
-                    "targetId": fixture_id(5, 12),
-                    "proposedPrompt": "仅在当前分镜使用的深蓝防雨风衣",
-                    "summary": "创建分镜级服装覆盖"
+                    "targetId":fixture_id(6, 12),"baseRevision":1,
+                    "proposedPrompt":"从首帧移动到尾帧",
+                    "input":{"type":"firstLastFrames","firstFrameMediaId":fixture_id(7, 12),
+                             "lastFrameMediaId":fixture_id(7, 12)},
+                    "summary":"锁定首尾帧"
                 }),
             ),
             fixture.context(fixture.thread_id),
         )
         .await
         .unwrap();
-    let binding_output: Value = serde_json::from_str(&binding.output).unwrap();
-    assert_eq!(binding_output["targetType"], "assetBindingPrompt");
-    assert_eq!(
-        fixture.scalar_i64("SELECT COUNT(*) FROM change_proposals"),
-        2
+    let video_result: Value = serde_json::from_str(&video.output).unwrap();
+    assert_eq!(video_result["proposedInput"]["type"], "firstLastFrames");
+
+    let denied = fixture
+        .tool(VIDEO_TOOL_NAME)
+        .execute(
+            ToolCall::new(
+                VIDEO_TOOL_NAME,
+                json!({
+                    "targetId":fixture_id(6, 12),"baseRevision":1,
+                    "proposedPrompt":"越界参考","input":{"type":"referenceImages",
+                        "mediaIds":[fixture_id(7, 1)]},"summary":"越界"
+                }),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await;
+    assert!(denied.is_err());
+
+    let mixed = fixture
+        .tool(VIDEO_TOOL_NAME)
+        .execute(
+            ToolCall::new(
+                VIDEO_TOOL_NAME,
+                json!({
+                    "targetId":fixture_id(6, 12),"baseRevision":1,
+                    "proposedPrompt":"混用","input":{"type":"firstLastFrames",
+                        "firstFrameMediaId":fixture_id(7, 12),"mediaIds":[fixture_id(8, 12)]},
+                    "summary":"混用"
+                }),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await;
+    assert!(mixed.is_err());
+
+    let shared_media_id = fixture_id(9, 12);
+    let connection = fixture.database.connect().unwrap();
+    let asset_id: String = connection
+        .query_row(
+            "SELECT asset_id FROM asset_bindings WHERE id = ?1",
+            [fixture_id(5, 12).to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO media_items \
+             (id, project_id, asset_id, kind, role, name, prompt, mime_type, \
+              source_object_key, status, revision, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, 'image', 'assetView', '共享资产画面', '原始提示词', \
+                     'image/png', 'fixture/shared.png', 'ready', 1, ?4, ?4)",
+            params![
+                shared_media_id.to_string(),
+                DEMO_PROJECT_ID,
+                asset_id,
+                "2026-09-26T00:00:00Z",
+            ],
+        )
+        .unwrap();
+    drop(connection);
+    let read = fixture
+        .tool(READ_TOOL_NAME)
+        .execute(
+            ToolCall::new(READ_TOOL_NAME, json!({"kind":"image","id":shared_media_id})),
+            fixture.context(fixture.thread_id),
+        )
+        .await
+        .unwrap();
+    let resource: Value = serde_json::from_str(&read.output).unwrap();
+    assert_eq!(resource["editable"], false);
+    let shared_edit = fixture
+        .tool(IMAGE_TOOL_NAME)
+        .execute(
+            ToolCall::new(
+                IMAGE_TOOL_NAME,
+                json!({
+                    "targetType":"media","targetId":shared_media_id,"baseRevision":1,
+                    "proposedPrompt":"改动共享图","input":{"type":"textOnly"},
+                    "summary":"不应跨片段改共享媒体"
+                }),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await;
+    assert!(shared_edit.is_err());
+    assert_eq!(fixture.count("change_proposals"), 2);
+}
+
+#[tokio::test]
+async fn confirming_prompt_uses_and_reads_back_suggested_references() {
+    let fixture = ToolFixture::new();
+    let result = fixture
+        .tool(IMAGE_TOOL_NAME)
+        .execute(
+            ToolCall::new(
+                IMAGE_TOOL_NAME,
+                json!({
+                    "targetType":"media","targetId":fixture_id(7, 12),"baseRevision":1,
+                    "proposedPrompt":"按参考图片 1 的构图重新绘制",
+                    "input":{"type":"referenceImages","mediaIds":[fixture_id(8, 12)]},
+                    "summary":"更新关键帧"
+                }),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await
+        .unwrap();
+    let output: Value = serde_json::from_str(&result.output).unwrap();
+    let proposal_id = crate::product::domain::ProposalId(
+        Uuid::parse_str(output["proposalId"].as_str().unwrap()).unwrap(),
     );
+    let service = ProposalService::new(Arc::new(SqliteProposalRepository::new(
+        fixture.database.clone(),
+    )));
+    let applied = service
+        .apply_with_generation(
+            crate::product::domain::ProjectId(Uuid::parse_str(DEMO_PROJECT_ID).unwrap()),
+            proposal_id,
+            1,
+            1,
+            None,
+            Uuid::new_v4().to_string(),
+        )
+        .await
+        .unwrap();
+    let job = applied.generation_job.unwrap();
     assert_eq!(
-        fixture.scalar_i64("SELECT COUNT(*) FROM asset_bindings WHERE prompt_override IS NOT NULL"),
-        0,
-        "creating a proposal must not apply the prompt override"
+        job.spec.input,
+        GenerationInputSelection::ReferenceImages {
+            media_ids: vec![MediaId(fixture_id(8, 12))],
+        }
     );
+    let read = fixture
+        .tool(READ_TOOL_NAME)
+        .execute(
+            ToolCall::new(
+                READ_TOOL_NAME,
+                json!({"kind":"image","id":fixture_id(7, 12)}),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await
+        .unwrap();
+    let current: Value = serde_json::from_str(&read.output).unwrap();
     assert_eq!(
-        fixture.scalar_string(
-            "SELECT prompt FROM media_items WHERE id =
-             '60000000-0000-4000-8000-000000000012'"
-        ),
-        "镜头缓慢前推，细雨与远处警示灯形成视差"
+        current["generationInput"]["mediaIds"][0],
+        fixture_id(8, 12).to_string()
     );
 }

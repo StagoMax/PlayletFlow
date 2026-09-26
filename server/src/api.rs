@@ -1,4 +1,7 @@
-use crate::{conversation::ConversationService, runtime};
+use crate::{
+    conversation::{self, ConversationService},
+    runtime,
+};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderName, Method, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -20,6 +23,10 @@ pub fn router(service: ConversationService) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/threads", get(list_threads).post(create_thread))
+        .route(
+            "/api/threads/:thread_id/title",
+            axum::routing::post(generate_thread_title),
+        )
         .route(
             "/api/threads/:thread_id/messages",
             get(list_messages).post(send_message),
@@ -106,6 +113,67 @@ async fn create_thread(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct GenerateThreadTitleRequest {
+    prompt: String,
+    expected_title: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GenerateThreadTitleResponse {
+    thread: Thread,
+    updated: bool,
+}
+
+async fn generate_thread_title(
+    State(service): State<ConversationService>,
+    Path(thread_id): Path<Uuid>,
+    Json(request): Json<GenerateThreadTitleRequest>,
+) -> ApiResult<Json<GenerateThreadTitleResponse>> {
+    let current = service
+        .ensure_thread(thread_id)
+        .map_err(|_| ApiError::not_found())?;
+    if current.title != request.expected_title {
+        return Ok(Json(GenerateThreadTitleResponse {
+            thread: current,
+            updated: false,
+        }));
+    }
+    let title = local_thread_title(&request.prompt).ok_or_else(|| {
+        ApiError(
+            StatusCode::BAD_REQUEST,
+            "thread title prompt cannot be empty".to_owned(),
+        )
+    })?;
+    let thread = service
+        .store
+        .update_thread(thread_id, Some(title), None, None)
+        .map_err(internal)?
+        .ok_or_else(ApiError::not_found)?;
+    Ok(Json(GenerateThreadTitleResponse {
+        thread,
+        updated: true,
+    }))
+}
+
+fn local_thread_title(prompt: &str) -> Option<String> {
+    const MAX_CHARS: usize = 100;
+    let title = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.is_empty() {
+        return None;
+    }
+    let characters = title.chars().collect::<Vec<_>>();
+    if characters.len() <= MAX_CHARS {
+        return Some(title);
+    }
+    Some(format!(
+        "{}…",
+        characters[..MAX_CHARS - 1].iter().collect::<String>()
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MessageQuery {
     before_created_at: Option<DateTime<Utc>>,
     before_id: Option<Uuid>,
@@ -147,8 +215,21 @@ fn cursor(at: Option<DateTime<Utc>>, id: Option<Uuid>) -> ApiResult<Option<(Date
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SendMessageRequest {
-    content: String,
+    content_parts: Vec<SendMessagePart>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum SendMessagePart {
+    Text {
+        text: String,
+    },
+    AssetRef {
+        #[serde(rename = "assetId")]
+        asset_id: String,
+    },
 }
 
 #[derive(Serialize)]
@@ -164,8 +245,18 @@ async fn send_message(
     Json(request): Json<SendMessageRequest>,
 ) -> ApiResult<(StatusCode, Json<SendMessageResponse>)> {
     require_thread(&service, thread_id)?;
+    let parts = request
+        .content_parts
+        .into_iter()
+        .map(|part| match part {
+            SendMessagePart::Text { text } => conversation::ConversationInputPart::Text(text),
+            SendMessagePart::AssetRef { asset_id } => {
+                conversation::ConversationInputPart::AssetReference(asset_id)
+            }
+        })
+        .collect();
     let (message, turn_id) = service
-        .send_message(thread_id, request.content)
+        .send_message(thread_id, parts)
         .await
         .map_err(|error| {
             let text = error.to_string();

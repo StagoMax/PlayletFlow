@@ -1,6 +1,6 @@
 use super::{
-    AssetBindingId, AssetId, AssetRepresentationId, AssetSectionId, GenerationJobId,
-    GenerationSpec, MediaId, OutboxEventId, ProjectId, ProposalId, StoryboardId,
+    AssetBindingId, AssetId, AssetRepresentationId, AssetSectionId, GenerationInputSelection,
+    GenerationJobId, GenerationSpec, MediaId, OutboxEventId, ProjectId, ProposalId, StoryboardId,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -125,6 +125,8 @@ pub struct ChangeProposal {
     pub base_revision: i64,
     pub before_value: String,
     pub proposed_value: String,
+    /// Generation inputs suggested by the agent. None preserves older proposals.
+    pub proposed_input: Option<GenerationInputSelection>,
     pub summary: String,
     pub status: ProposalStatus,
     pub source: ProposalSource,

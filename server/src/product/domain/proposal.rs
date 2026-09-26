@@ -111,6 +111,7 @@ mod tests {
             base_revision: 1,
             before_value: "before".into(),
             proposed_value: "after".into(),
+            proposed_input: None,
             summary: "summary".into(),
             status: ProposalStatus::Pending,
             source: ProposalSource {

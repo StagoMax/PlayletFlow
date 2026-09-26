@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use opentopia_core::model::{
-    AgentEvent, AgentEventPayload, ExperienceMode, Message, MessageRole, Thread,
+    AgentEvent, AgentEventPayload, ExperienceMode, Message, MessagePart, MessageRole, Thread,
 };
 use opentopia_core::provider::{ModelConversationMessage, ModelProvider};
 use opentopia_core::store::{SessionStore, SqliteSessionStore};
@@ -13,11 +13,27 @@ use tokio::sync::{broadcast, Mutex};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::{conversation_events::conversation_payload, history, runtime};
+use crate::{
+    conversation_events::conversation_payload,
+    conversation_references::{message_model_text, reference_part, WorkspaceReference},
+    history, runtime,
+};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConversationInputPart {
+    Text(String),
+    AssetReference(String),
+}
 
 #[async_trait]
 pub trait ConversationContextProvider: Send + Sync {
     async fn context_for_thread(&self, thread_id: Uuid) -> Result<Option<String>>;
+
+    async fn resolve_references(
+        &self,
+        thread_id: Uuid,
+        reference_ids: &[String],
+    ) -> Result<Vec<WorkspaceReference>>;
 }
 
 #[derive(Clone)]
@@ -89,12 +105,65 @@ impl ConversationService {
         }
     }
 
-    pub async fn send_message(&self, thread_id: Uuid, content: String) -> Result<(Message, Uuid)> {
+    pub async fn send_message(
+        &self,
+        thread_id: Uuid,
+        input_parts: Vec<ConversationInputPart>,
+    ) -> Result<(Message, Uuid)> {
         self.ensure_thread(thread_id)?;
-        let content = content.trim().to_owned();
-        if content.is_empty() || content.len() > 16_000 {
+        let human_text = input_parts
+            .iter()
+            .filter_map(|part| match part {
+                ConversationInputPart::Text(text) => Some(text.as_str()),
+                ConversationInputPart::AssetReference(_) => None,
+            })
+            .collect::<String>()
+            .trim()
+            .to_owned();
+        if human_text.is_empty() || human_text.len() > 16_000 {
             return Err(anyhow!("message must contain 1 to 16000 characters"));
         }
+        if input_parts.len() > 100 {
+            return Err(anyhow!("message contains too many parts"));
+        }
+        let mut reference_ids = Vec::new();
+        for part in &input_parts {
+            let ConversationInputPart::AssetReference(id) = part else {
+                continue;
+            };
+            if !reference_ids.contains(id) {
+                reference_ids.push(id.clone());
+            }
+        }
+        let resolved_references = if reference_ids.is_empty() {
+            Vec::new()
+        } else {
+            let provider = self
+                .context_provider
+                .as_ref()
+                .ok_or_else(|| anyhow!("workspace references are unavailable for this thread"))?;
+            provider
+                .resolve_references(thread_id, &reference_ids)
+                .await?
+        };
+        if resolved_references.len() != reference_ids.len() {
+            return Err(anyhow!("one or more workspace references are unavailable"));
+        }
+        let references_by_id = resolved_references
+            .iter()
+            .map(|reference| (reference.id.as_str(), reference))
+            .collect::<HashMap<_, _>>();
+        let message_parts = input_parts
+            .into_iter()
+            .map(|part| match part {
+                ConversationInputPart::Text(text) => Ok(MessagePart::Text { text }),
+                ConversationInputPart::AssetReference(id) => references_by_id
+                    .get(id.as_str())
+                    .ok_or_else(|| anyhow!("workspace reference was not resolved: {id}"))
+                    .and_then(|reference| reference_part(reference)),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let content = message_model_text(&message_parts);
         let turn_id = Uuid::new_v4();
         let cancellation = CancellationToken::new();
         {
@@ -126,7 +195,7 @@ impl ConversationService {
         };
         let trusted_context = if let Some(provider) = &self.context_provider {
             match provider.context_for_thread(thread_id).await {
-                Ok(context) => context,
+                Ok(context) => augment_context_with_references(context, &resolved_references),
                 Err(error) => {
                     self.active.lock().await.remove(&thread_id);
                     return Err(error);
@@ -135,7 +204,13 @@ impl ConversationService {
         } else {
             None
         };
-        let user = Message::text(thread_id, MessageRole::User, content.clone());
+        let user = Message {
+            id: Uuid::new_v4(),
+            thread_id,
+            role: MessageRole::User,
+            parts: message_parts,
+            created_at: chrono::Utc::now(),
+        };
         if let Err(error) = self.store.append_message(user.clone()) {
             self.active.lock().await.remove(&thread_id);
             return Err(error);
@@ -245,6 +320,25 @@ impl ConversationService {
     }
 }
 
+fn augment_context_with_references(
+    context: Option<String>,
+    references: &[WorkspaceReference],
+) -> Option<String> {
+    if references.is_empty() {
+        return context;
+    }
+    let workspace = context
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
+        .unwrap_or(serde_json::Value::Null);
+    Some(
+        serde_json::json!({
+            "workspace": workspace,
+            "selectedReferences": references,
+        })
+        .to_string(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,7 +372,7 @@ mod tests {
         let thread = service.create_thread(Some("reload test".into())).unwrap();
         let mut events = service.subscribe(thread.id).await;
         let (user, turn_id) = service
-            .send_message(thread.id, "hello".into())
+            .send_message(thread.id, vec![ConversationInputPart::Text("hello".into())])
             .await
             .unwrap();
         let mut saw_finish = false;
@@ -322,7 +416,10 @@ mod tests {
         let thread = service.create_thread(Some("cancel test".into())).unwrap();
         let mut events = service.subscribe(thread.id).await;
         let (_, turn_id) = service
-            .send_message(thread.id, "please wait".into())
+            .send_message(
+                thread.id,
+                vec![ConversationInputPart::Text("please wait".into())],
+            )
             .await
             .unwrap();
 

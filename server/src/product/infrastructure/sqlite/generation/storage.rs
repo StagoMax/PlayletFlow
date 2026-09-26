@@ -1,5 +1,5 @@
 use crate::product::domain::{
-    GenerationJob, GenerationSpec, ProductError, ProductResult, ProjectId,
+    GenerationJob, GenerationSpec, ProductError, ProductResult, ProjectId, StoryboardId,
 };
 use crate::product::infrastructure::sqlite::support::append_event;
 use rusqlite::{params, Transaction};
@@ -38,19 +38,31 @@ pub(crate) fn insert(tx: &Transaction<'_>, job: &GenerationJob) -> ProductResult
 pub(crate) fn validate_inputs(
     tx: &Transaction<'_>,
     project_id: ProjectId,
+    storyboard_id: StoryboardId,
     spec: &GenerationSpec,
 ) -> ProductResult<()> {
     for media_id in spec.input.media_ids() {
         let valid: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM media_items \
              WHERE id = ?1 AND project_id = ?2 AND kind = 'image' AND status = 'ready' \
-               AND source_object_key IS NOT NULL AND deleted_at IS NULL)",
-            params![media_id.to_string(), project_id.to_string()],
+               AND source_object_key IS NOT NULL AND deleted_at IS NULL \
+               AND (storyboard_id = ?3 OR EXISTS ( \
+                   SELECT 1 FROM asset_bindings binding \
+                   JOIN assets asset ON asset.id = binding.asset_id \
+                     AND asset.project_id = binding.project_id \
+                   WHERE binding.asset_id = media_items.asset_id \
+                     AND binding.storyboard_id = ?3 AND binding.project_id = ?2 \
+                     AND asset.deleted_at IS NULL)))",
+            params![
+                media_id.to_string(),
+                project_id.to_string(),
+                storyboard_id.to_string()
+            ],
             |row| row.get(0),
         )?;
         if !valid {
             return Err(ProductError::Validation(
-                "generation inputs must reference ready images in the same project".into(),
+                "generation inputs must reference ready images visible in this storyboard".into(),
             ));
         }
     }

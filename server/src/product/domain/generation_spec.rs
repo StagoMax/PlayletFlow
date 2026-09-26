@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 #[serde(
     rename_all = "camelCase",
     rename_all_fields = "camelCase",
-    tag = "type"
+    tag = "type",
+    deny_unknown_fields
 )]
 pub enum GenerationInputSelection {
     #[default]
