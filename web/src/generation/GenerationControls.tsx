@@ -1,5 +1,4 @@
 import { useEffect, useId, useState } from "react";
-import { ComposerModelPicker } from "../composer/ComposerModelPicker";
 import type {
   GenerationInputSelection,
   GenerationModel,
@@ -54,14 +53,14 @@ export function GenerationControls({
     return () => controller.abort();
   }, [kind, loadModels]);
 
-  const selectedModel = models.find((model) => model.id === value.model);
+  const selectedModel = models.find((model) => model.id === value.model) ?? models[0];
   const inputType = value.input?.type ?? "textOnly";
   const firstLastInput = value.input?.type === "firstLastFrames" ? value.input : null;
   const referenceInput = value.input?.type === "referenceImages" ? value.input : null;
   const canUseFirstLast = kind === "video"
     && (selectedModel?.supportsFirstLastFrames ?? true)
     && media.length > 0;
-  const maxReferences = selectedModel?.maxReferenceImages ?? (kind === "video" ? 30 : 14);
+  const maxReferences = selectedModel?.maxReferenceImages ?? (kind === "video" ? 9 : 14);
 
   function setInput(type: GenerationInputSelection["type"]) {
     if (type === "textOnly") {
@@ -91,33 +90,17 @@ export function GenerationControls({
     onChange({ ...value, input: { type: "referenceImages", mediaIds } });
   }
 
-  function selectModel(modelId: string | null) {
-    const model = models.find((item) => item.id === modelId);
-    const incompatibleFirstLast = inputType === "firstLastFrames" && model?.supportsFirstLastFrames === false;
-    const incompatibleReferences = inputType === "referenceImages" && model?.maxReferenceImages === 0;
-    onChange({
-      ...value,
-      model: modelId,
-      input: incompatibleFirstLast || incompatibleReferences ? { type: "textOnly" } : value.input,
-    });
+  function moveReference(index: number, direction: -1 | 1) {
+    if (!referenceInput) return;
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= referenceInput.mediaIds.length) return;
+    const mediaIds = [...referenceInput.mediaIds];
+    [mediaIds[index], mediaIds[nextIndex]] = [mediaIds[nextIndex], mediaIds[index]];
+    onChange({ ...value, input: { type: "referenceImages", mediaIds } });
   }
 
-  const modelPicker = (
-    <ComposerModelPicker
-      ariaLabel={`选择${kind === "image" ? "图片" : "视频"}生成模型`}
-      options={models.map((model) => ({
-        id: model.id,
-        label: model.label,
-        description: kind === "image"
-          ? `最多 ${model.maxReferenceImages} 张参考图`
-          : `${model.minDurationSeconds ?? 4}–${model.maxDurationSeconds ?? 30} 秒`,
-      }))}
-      value={value.model ?? null}
-      emptyLabel="自动选择推荐模型"
-      onChange={selectModel}
-      disabled={disabled}
-    />
-  );
+  const fixedModelName = selectedModel?.label
+    ?? (kind === "image" ? "Seedream 5.0 Lite" : "Seedance 2.0 Mini");
 
   const formatControls = kind === "image" ? (
     <label>
@@ -142,7 +125,6 @@ export function GenerationControls({
         >
           <option value="480p">480p</option>
           <option value="720p">720p</option>
-          <option value="1080p">1080p</option>
         </select>
       </label>
       <label>
@@ -150,7 +132,7 @@ export function GenerationControls({
         <input
           type="number"
           min={selectedModel?.minDurationSeconds ?? 4}
-          max={selectedModel?.maxDurationSeconds ?? 30}
+          max={selectedModel?.maxDurationSeconds ?? 15}
           value={value.durationSeconds ?? 4}
           disabled={disabled}
           onChange={(event) => onChange({ ...value, durationSeconds: Number(event.target.value) })}
@@ -225,6 +207,17 @@ export function GenerationControls({
               {item.name}
             </label>
           ))}
+          {referenceInput.mediaIds.length > 0 ? (
+            <ol className="generation-controls__reference-order" aria-label="参考图片顺序">
+              {referenceInput.mediaIds.map((id, index) => (
+                <li key={id}>
+                  <span>图片 {index + 1} · {media.find((item) => item.id === id)?.name ?? id}</span>
+                  <button type="button" disabled={disabled || index === 0} onClick={() => moveReference(index, -1)} aria-label={`上移图片 ${index + 1}`}>上移</button>
+                  <button type="button" disabled={disabled || index === referenceInput.mediaIds.length - 1} onClick={() => moveReference(index, 1)} aria-label={`下移图片 ${index + 1}`}>下移</button>
+                </li>
+              ))}
+            </ol>
+          ) : null}
           <small>关键帧会作为 reference_image 发送；它与严格首尾帧模式互斥。最多 {maxReferences} 张。</small>
         </div>
       ) : null}
@@ -234,7 +227,7 @@ export function GenerationControls({
   if (compact) {
     return (
       <section className="generation-controls is-compact" aria-label="生成设置">
-        {modelPicker}
+        <span className="generation-controls__fixed-model">{fixedModelName}</span>
         <details className="generation-controls__disclosure">
           <summary aria-label="打开生成设置" title="生成设置">
             <Icon name="more" />
@@ -253,10 +246,7 @@ export function GenerationControls({
   return (
     <section className="generation-controls" aria-label="生成设置">
       <div className="generation-controls__grid">
-        <div className="generation-controls__model">
-          <span>生成模型</span>
-          {modelPicker}
-        </div>
+        <span className="generation-controls__fixed-model">{fixedModelName}</span>
         {formatControls}
       </div>
       {catalogError ? <small className="generation-controls__hint">{catalogError}</small> : null}

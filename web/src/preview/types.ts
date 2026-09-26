@@ -9,3 +9,12 @@ export type PreviewItem = {
   media: MediaItem;
 };
 
+export type HoverPreviewMedia = Pick<
+  MediaItem,
+  "kind" | "status" | "width" | "height" | "durationMs" | "mimeType" | "thumbnail" | "preview"
+>;
+
+export type HoverPreviewItem = {
+  name: string;
+  media: HoverPreviewMedia;
+};

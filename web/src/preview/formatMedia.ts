@@ -29,7 +29,7 @@ export function formatDimensions(media: MediaItem) {
   return `${media.width} × ${media.height}`;
 }
 
-export function formatAspectRatio(media: MediaItem) {
+export function formatAspectRatio(media: Pick<MediaItem, "width" | "height">) {
   if (!media.width || !media.height) return "未知";
   return `${reduceRatio(media.width, media.height)}`;
 }

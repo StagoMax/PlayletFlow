@@ -10,8 +10,8 @@ import {
   type ReactNode,
 } from "react";
 import { Icon } from "../workspace/Icons";
-import { formatAspectRatio, formatDuration, isAccessExpired } from "./formatMedia";
-import type { PreviewItem } from "./types";
+import { isAccessExpired } from "./formatMedia";
+import type { HoverPreviewItem, HoverPreviewMedia } from "./types";
 import { useReducedMotion } from "./useReducedMotion";
 import "./preview.css";
 
@@ -19,20 +19,46 @@ const OPEN_DELAY_MS = 300;
 const CLOSE_DELAY_MS = 120;
 const PANEL_GAP = 12;
 const VIEWPORT_GUTTER = 16;
+const MAX_PANEL_WIDTH = 267;
+const DEFAULT_ASPECT_RATIO = 16 / 10;
 
 type HoverPreviewProps = {
-  item: PreviewItem;
+  item: HoverPreviewItem;
   children: ReactNode;
+  disabled?: boolean;
+  placement?: "side" | "top";
+  openDelayMs?: number;
+  className?: string;
 };
 
 type PanelPosition = {
   top: number;
   left: number;
   width: number;
-  placement: "left" | "right";
+  height: number;
+  placement: "left" | "right" | "top" | "bottom";
 };
 
-export function HoverPreview({ item, children }: HoverPreviewProps) {
+export function hoverPreviewSize(media: HoverPreviewMedia, viewportWidth: number, viewportHeight: number) {
+  const dimensions = [media.preview, media, media.thumbnail].find(
+    (source) => Number.isFinite(source?.width) && Number.isFinite(source?.height)
+      && (source?.width ?? 0) > 0 && (source?.height ?? 0) > 0,
+  );
+  const ratio = dimensions ? dimensions.width! / dimensions.height! : DEFAULT_ASPECT_RATIO;
+  const availableWidth = Math.max(1, viewportWidth - VIEWPORT_GUTTER * 2);
+  const availableHeight = Math.max(1, viewportHeight - VIEWPORT_GUTTER * 2);
+  const width = Math.min(MAX_PANEL_WIDTH, availableWidth, availableHeight * ratio);
+  return { width, height: width / ratio };
+}
+
+export function HoverPreview({
+  item,
+  children,
+  disabled = false,
+  placement: preferredPlacement = "side",
+  openDelayMs = OPEN_DELAY_MS,
+  className,
+}: HoverPreviewProps) {
   const anchorRef = useRef<HTMLDivElement>(null);
   const openTimer = useRef<number | null>(null);
   const closeTimer = useRef<number | null>(null);
@@ -41,6 +67,7 @@ export function HoverPreview({ item, children }: HoverPreviewProps) {
     top: VIEWPORT_GUTTER,
     left: VIEWPORT_GUTTER,
     width: 360,
+    height: 225,
     placement: "right",
   });
 
@@ -53,8 +80,8 @@ export function HoverPreview({ item, children }: HoverPreviewProps) {
 
   const showAfterDelay = useCallback(() => {
     clearTimers();
-    openTimer.current = window.setTimeout(() => setOpen(true), OPEN_DELAY_MS);
-  }, [clearTimers]);
+    openTimer.current = window.setTimeout(() => setOpen(true), openDelayMs);
+  }, [clearTimers, openDelayMs]);
 
   const showImmediately = useCallback(() => {
     clearTimers();
@@ -70,8 +97,28 @@ export function HoverPreview({ item, children }: HoverPreviewProps) {
     const anchor = anchorRef.current;
     if (!anchor) return;
     const rect = anchor.getBoundingClientRect();
-    const width = Math.min(400, Math.max(260, window.innerWidth - VIEWPORT_GUTTER * 2));
-    const estimatedHeight = Math.min(330, Math.max(220, width * 0.72));
+    const { width, height } = hoverPreviewSize(item.media, window.innerWidth, window.innerHeight);
+    if (preferredPlacement === "top") {
+      const preferredLeft = rect.left + rect.width / 2 - width / 2;
+      const left = Math.min(
+        window.innerWidth - width - VIEWPORT_GUTTER,
+        Math.max(VIEWPORT_GUTTER, preferredLeft),
+      );
+      const aboveTop = rect.top - height - PANEL_GAP;
+      const belowTop = rect.bottom + PANEL_GAP;
+      const fitsAbove = aboveTop >= VIEWPORT_GUTTER;
+      const fitsBelow = belowTop + height <= window.innerHeight - VIEWPORT_GUTTER;
+      const top = fitsAbove
+        ? aboveTop
+        : fitsBelow
+          ? belowTop
+          : Math.min(
+              Math.max(VIEWPORT_GUTTER, aboveTop),
+              Math.max(VIEWPORT_GUTTER, window.innerHeight - height - VIEWPORT_GUTTER),
+            );
+      setPosition({ top, left, width, height, placement: fitsAbove || !fitsBelow ? "top" : "bottom" });
+      return;
+    }
     const rightLeft = rect.right + PANEL_GAP;
     const fitsRight = rightLeft + width <= window.innerWidth - VIEWPORT_GUTTER;
     const placement = fitsRight ? "right" : "left";
@@ -82,14 +129,14 @@ export function HoverPreview({ item, children }: HoverPreviewProps) {
     );
     const maxTop = Math.max(
       VIEWPORT_GUTTER,
-      window.innerHeight - estimatedHeight - VIEWPORT_GUTTER,
+      window.innerHeight - height - VIEWPORT_GUTTER,
     );
     const top = Math.min(
       maxTop,
-      Math.max(VIEWPORT_GUTTER, rect.top + rect.height / 2 - estimatedHeight / 2),
+      Math.max(VIEWPORT_GUTTER, rect.top + rect.height / 2 - height / 2),
     );
-    setPosition({ top, left, width, placement });
-  }, []);
+    setPosition({ top, left, width, height, placement });
+  }, [item.media, preferredPlacement]);
 
   useLayoutEffect(() => {
     if (!open) return undefined;
@@ -113,13 +160,20 @@ export function HoverPreview({ item, children }: HoverPreviewProps) {
 
   useEffect(() => clearTimers, [clearTimers]);
 
+  useEffect(() => {
+    if (!disabled) return;
+    clearTimers();
+    setOpen(false);
+  }, [clearTimers, disabled]);
+
   const onPointerEnter = (event: PointerEvent<HTMLDivElement>) => {
+    if (disabled) return;
     if (event.pointerType === "touch") return;
     if (window.matchMedia?.("(hover: hover) and (pointer: fine)").matches === false) return;
     showAfterDelay();
   };
 
-  const onFocus = () => showImmediately();
+  const onFocus = () => { if (!disabled) showImmediately(); };
   const onBlur = (event: FocusEvent<HTMLDivElement>) => {
     if (event.currentTarget.contains(event.relatedTarget)) return;
     hideAfterDelay();
@@ -128,14 +182,14 @@ export function HoverPreview({ item, children }: HoverPreviewProps) {
   return (
     <div
       ref={anchorRef}
-      className="hover-preview-anchor"
+      className={`hover-preview-anchor${className ? ` ${className}` : ""}`}
       onPointerEnter={onPointerEnter}
       onPointerLeave={hideAfterDelay}
       onFocusCapture={onFocus}
       onBlurCapture={onBlur}
     >
       {children}
-      {open && typeof document !== "undefined"
+      {open && !disabled && typeof document !== "undefined"
         ? createPortal(
             <HoverPreviewPanel item={item} position={position} />,
             document.body,
@@ -145,21 +199,23 @@ export function HoverPreview({ item, children }: HoverPreviewProps) {
   );
 }
 
-function HoverPreviewPanel({ item, position }: { item: PreviewItem; position: PanelPosition }) {
+function HoverPreviewPanel({ item, position }: { item: HoverPreviewItem; position: PanelPosition }) {
   const reducedMotion = useReducedMotion();
   const { media } = item;
   const preview = media.preview && !isAccessExpired(media.preview) ? media.preview : null;
   const thumbnail = media.thumbnail && !isAccessExpired({ ...media.thumbnail, mimeType: media.mimeType })
     ? media.thumbnail
     : null;
-  const imageSource = preview?.mimeType.startsWith("image/") ? preview.url : thumbnail?.url;
+  const imageSource = media.kind === "image"
+    ? preview?.url || thumbnail?.url
+    : preview?.mimeType.startsWith("image/") ? preview.url : thumbnail?.url;
   const videoSource = preview?.mimeType.startsWith("video/") ? preview.url : null;
 
   return (
     <aside
       className="hover-preview-panel"
       data-placement={position.placement}
-      style={{ top: position.top, left: position.left, width: position.width }}
+      style={{ top: position.top, left: position.left, width: position.width, height: position.height }}
       role="tooltip"
       aria-label={`${item.name}大预览`}
     >
@@ -182,10 +238,6 @@ function HoverPreviewPanel({ item, position }: { item: PreviewItem; position: Pa
             <span>{media.status === "processing" ? "正在生成预览" : "暂无可用预览"}</span>
           </div>
         )}
-      </div>
-      <div className="hover-preview-caption">
-        <div><strong>{item.name}</strong><span>{item.label}</span></div>
-        <small>{formatAspectRatio(media)}{formatDuration(media.durationMs) ? ` · ${formatDuration(media.durationMs)}` : ""}</small>
       </div>
     </aside>
   );

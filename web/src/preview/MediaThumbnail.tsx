@@ -13,6 +13,8 @@ export function MediaThumbnail({ item }: MediaThumbnailProps) {
   const { media } = item;
   const thumbnail = media.thumbnail;
   const hasThumbnail = media.status === "ready" && thumbnail && !isAccessExpired({ ...thumbnail, mimeType: media.mimeType });
+  const hasVideoPreview = media.status === "ready" && media.kind === "video"
+    && media.preview?.mimeType.startsWith("video/") && !isAccessExpired(media.preview);
   const duration = formatDuration(media.durationMs);
 
   return (
@@ -30,6 +32,11 @@ export function MediaThumbnail({ item }: MediaThumbnailProps) {
           loading="lazy"
           decoding="async"
         />
+      ) : hasVideoPreview ? (
+        <video src={media.preview?.url} muted playsInline preload="metadata" onLoadedMetadata={(event) => {
+          const video = event.currentTarget;
+          if (Number.isFinite(video.duration) && video.duration > 0.1) video.currentTime = 0.1;
+        }} />
       ) : (
         <span className="media-thumbnail-placeholder">
           <span className="thumbnail-grid" />

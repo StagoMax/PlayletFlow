@@ -11,6 +11,7 @@ type ProposalPanelProps = {
   client: ProposalClient;
   projectId: string;
   proposal: ChangeProposal;
+  targetName?: string;
   currentTargetRevision: number;
   generationContext?: ProposalGenerationContext;
   applyBlockedReason?: string;
@@ -37,6 +38,7 @@ export function ProposalPanel({
   client,
   projectId,
   proposal,
+  targetName,
   currentTargetRevision,
   generationContext,
   applyBlockedReason,
@@ -79,11 +81,18 @@ export function ProposalPanel({
   return (
     <article className={`proposal-panel proposal-panel--${proposal.status}`}>
       <header className="proposal-panel__header">
-        <div><small>{proposalTargetLabel(proposal.target)}</small><h2>{proposal.summary}</h2></div>
+        <div><small>{proposalTargetLabel(proposal.target)} · {targetName ?? proposalTargetId(proposal.target)}</small><h2>{proposal.summary}</h2></div>
         <ProposalBadge status={proposal.status} />
       </header>
       <p className="proposal-panel__notice">{proposalNotice(proposal.status)}</p>
       <ProposalDiff beforeValue={proposal.beforeValue} proposedValue={proposal.proposedValue} />
+      {proposal.proposedInput ? (
+        <div className="proposal-panel__references">
+          <strong>AI 建议的生成引用</strong>
+          <p>{describeInput(proposal.proposedInput, generationContext)}</p>
+          <small>确认前可在下方调整；实际生成使用确认时显示的选择。</small>
+        </div>
+      ) : null}
       <dl className="proposal-panel__meta">
         <div><dt>建议版本</dt><dd>{proposal.revision}</dd></div>
         <div><dt>基于内容版本</dt><dd>{proposal.baseRevision}</dd></div>
@@ -106,6 +115,23 @@ export function ProposalPanel({
       {generationJob ? <GenerationFeedback job={generationJob} /> : null}
     </article>
   );
+}
+
+function proposalTargetId(target: ChangeProposal["target"]) {
+  if (target.type === "script") return target.storyboardId;
+  return target.type === "mediaPrompt" ? target.mediaId : target.bindingId;
+}
+
+function describeInput(
+  input: NonNullable<ChangeProposal["proposedInput"]>,
+  context?: ProposalGenerationContext,
+) {
+  const name = (id: string) => context?.media.find((item) => item.id === id)?.name ?? id;
+  if (input.type === "textOnly") return "仅使用提示词";
+  if (input.type === "firstLastFrames") {
+    return `严格首帧：${name(input.firstFrameMediaId)}${input.lastFrameMediaId ? `；尾帧：${name(input.lastFrameMediaId)}` : ""}`;
+  }
+  return `参考图片：${input.mediaIds.map((id, index) => `图片 ${index + 1} ${name(id)}`).join("；")}`;
 }
 
 function GenerationFeedback({ job }: { job: GenerationJob }) {

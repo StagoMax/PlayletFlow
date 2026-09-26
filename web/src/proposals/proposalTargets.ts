@@ -36,10 +36,10 @@ export function pendingProposalCountsByBinding(proposals: ChangeProposal[]): Rec
 export function proposalTargetLabel(target: ProposalTarget) {
   switch (target.type) {
     case "script":
-      return "分镜脚本";
+      return "片段脚本";
     case "mediaPrompt":
       return "媒体提示词";
     case "assetBindingPrompt":
-      return "分镜资产提示词";
+      return "片段资产提示词";
   }
 }

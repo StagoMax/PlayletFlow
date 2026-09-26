@@ -1,6 +1,6 @@
 /* eslint-disable */
 // This file is generated from docs/openapi.json. Do not edit it by hand.
-// Contract SHA-256: fb260bc5c0cdf0bfc1c68a4a09ac72bb8b4049c6bda9f6e3d634a04060ff3fd7
+// Contract SHA-256: 3d2abdb282b58136d58a0f0329911ebad4fb86e037f61b9470eee749b8b6a6d2
 
 export type Page = {
   nextCursor: string | null;
@@ -382,6 +382,7 @@ export type ChangeProposal = {
   baseRevision: number;
   beforeValue: string;
   proposedValue: string;
+  proposedInput?: GenerationInputSelection | null;
   summary: string;
   status: ProposalStatus;
   source: ProposalSource;
@@ -496,11 +497,16 @@ export type ProductApiOperation =
   | "DELETE /projects/{projectId}/storyboards/{storyboardId}"
   | "POST /projects/{projectId}/storyboards/{storyboardId}/restore"
   | "POST /projects/{projectId}/storyboards/{storyboardId}/reorder"
+  | "POST /projects/{projectId}/storyboards/{storyboardId}/duplicate"
   | "GET /projects/{projectId}/storyboards/{storyboardId}/script"
   | "PATCH /projects/{projectId}/storyboards/{storyboardId}/script"
   | "GET /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes"
   | "POST /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes"
   | "PATCH /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}"
+  | "DELETE /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}"
+  | "POST /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/copies"
+  | "POST /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/media"
+  | "PUT /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/media"
   | "GET /projects/{projectId}/storyboards/{storyboardId}/asset-sections"
   | "POST /projects/{projectId}/storyboards/{storyboardId}/asset-sections"
   | "PATCH /projects/{projectId}/storyboards/{storyboardId}/asset-sections/{sectionId}"
@@ -547,11 +553,16 @@ export type ProductApiOperationId =
   | "deleteStoryboard"
   | "restoreStoryboard"
   | "reorderStoryboard"
+  | "duplicateStoryboard"
   | "getStoryboardScript"
   | "updateStoryboardScript"
   | "listWorkspaceNodes"
   | "createWorkspaceNode"
   | "updateWorkspaceNode"
+  | "deleteWorkspaceNode"
+  | "copyWorkspaceNode"
+  | "ensureWorkspaceObjectMedia"
+  | "uploadWorkspaceObjectMedia"
   | "listAssetSections"
   | "createAssetSection"
   | "updateAssetSection"
@@ -598,11 +609,16 @@ export const PRODUCT_API_OPERATIONS = {
   deleteStoryboard: { method: "DELETE", path: "/projects/{projectId}/storyboards/{storyboardId}" },
   restoreStoryboard: { method: "POST", path: "/projects/{projectId}/storyboards/{storyboardId}/restore" },
   reorderStoryboard: { method: "POST", path: "/projects/{projectId}/storyboards/{storyboardId}/reorder" },
+  duplicateStoryboard: { method: "POST", path: "/projects/{projectId}/storyboards/{storyboardId}/duplicate" },
   getStoryboardScript: { method: "GET", path: "/projects/{projectId}/storyboards/{storyboardId}/script" },
   updateStoryboardScript: { method: "PATCH", path: "/projects/{projectId}/storyboards/{storyboardId}/script" },
   listWorkspaceNodes: { method: "GET", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes" },
   createWorkspaceNode: { method: "POST", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes" },
   updateWorkspaceNode: { method: "PATCH", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}" },
+  deleteWorkspaceNode: { method: "DELETE", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}" },
+  copyWorkspaceNode: { method: "POST", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/copies" },
+  ensureWorkspaceObjectMedia: { method: "POST", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/media" },
+  uploadWorkspaceObjectMedia: { method: "PUT", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/media" },
   listAssetSections: { method: "GET", path: "/projects/{projectId}/storyboards/{storyboardId}/asset-sections" },
   createAssetSection: { method: "POST", path: "/projects/{projectId}/storyboards/{storyboardId}/asset-sections" },
   updateAssetSection: { method: "PATCH", path: "/projects/{projectId}/storyboards/{storyboardId}/asset-sections/{sectionId}" },

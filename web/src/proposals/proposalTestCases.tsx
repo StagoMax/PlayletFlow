@@ -88,10 +88,10 @@ export const proposalTestCases: Record<string, () => TestResult> = {
         }}
       />,
     );
-    const ok = markup.includes("生成模型")
+    const ok = markup.includes("Seedance 2.0 Mini")
       && markup.includes("锁定首帧 / 尾帧")
       && markup.includes("使用参考关键帧")
       && markup.includes("同步生成声音");
-    return { ok, message: "媒体提案确认前应能选择模型、首尾帧或参考关键帧。" };
+    return { ok, message: "媒体提案确认前应显示固定模型，并可配置首尾帧或参考关键帧。" };
   },
 };

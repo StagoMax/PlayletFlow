@@ -166,6 +166,7 @@ export function MediaPromptComposer({
         <textarea
           ref={textareaRef}
           id={inputId}
+          placeholder={`描述你想生成的${mediaLabel}…`}
           value={prompt}
           rows={4}
           maxLength={10_000}

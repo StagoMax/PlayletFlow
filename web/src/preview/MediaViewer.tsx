@@ -3,11 +3,8 @@ import { Icon } from "../workspace/Icons";
 import { ImagePreviewSurface } from "./ImagePreviewSurface";
 import { BrokenMediaIcon, ClockIcon, RefreshMediaIcon } from "./PreviewIcons";
 import {
-  formatAspectRatio,
-  formatDimensions,
   isAccessExpired,
   mediaAspectRatio,
-  mediaStatusLabel,
 } from "./formatMedia";
 import type { PreviewItem } from "./types";
 import type { CSSProperties, ReactNode, SyntheticEvent } from "react";
@@ -73,13 +70,9 @@ export function MediaViewer({ item, onRefreshAccess }: MediaViewerProps) {
   }
 
   return (
-    <figure className="media-viewer" aria-labelledby={`media-viewer-caption-${media.id}`}>
+    <figure className="media-viewer" aria-label={`${media.name}媒体预览`}>
       <div className="media-viewer-glow" style={style} />
       <div className="media-viewer-frame" style={style}>{content}</div>
-      <figcaption id={`media-viewer-caption-${media.id}`}>
-        <strong>{media.name}</strong>
-        <span>{formatDimensions(media)} · {formatAspectRatio(media)} · {mediaStatusLabel(media.status)}</span>
-      </figcaption>
     </figure>
   );
 }

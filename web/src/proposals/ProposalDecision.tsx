@@ -35,7 +35,8 @@ export function ProposalDecision({
 }: ProposalDecisionProps) {
   const [generation, setGeneration] = useState<GenerationOptions | undefined>(() => {
     if (!generationContext) return undefined;
-    return createDefaultGenerationOptions(generationContext.kind);
+    const defaults = createDefaultGenerationOptions(generationContext.kind);
+    return { ...defaults, input: proposal.proposedInput ?? defaults.input };
   });
 
   return (

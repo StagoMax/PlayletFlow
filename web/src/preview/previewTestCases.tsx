@@ -4,6 +4,7 @@ import { MediaMetadata } from "./MediaMetadata";
 import { MediaPromptComposer } from "./MediaPromptComposer";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { MediaViewer } from "./MediaViewer";
+import { hoverPreviewSize } from "./HoverPreview";
 import { formatAspectRatio, formatDuration } from "./formatMedia";
 import type { PreviewItem } from "./types";
 
@@ -143,11 +144,29 @@ export const previewTestCases: Record<string, () => TestResult> = {
     return check(formatAspectRatio(media({ width: 1920, height: 1080 })) === "16:9", "ratio should reduce to 16:9");
   },
 
-  "portrait media preserves its 9:16 ratio metadata"() {
-    const markup = renderToStaticMarkup(<MediaViewer item={item({ width: 1080, height: 1920 })} />);
+  "portrait media keeps one 9:16 label and its full viewer ratio"() {
+    const portrait = item({ width: 1080, height: 1920 });
+    const markup = renderToStaticMarkup(<><MediaMetadata item={portrait} /><MediaViewer item={portrait} /></>);
     return check(
-      markup.includes("9:16") && markup.includes("--media-aspect-ratio:1080 / 1920"),
-      "portrait preview should carry the original 9:16 ratio into the viewer",
+      markup.match(/9:16/g)?.length === 1 && markup.includes("--media-aspect-ratio:1080 / 1920"),
+      "portrait ratio should appear once in the header while the viewer keeps its full frame",
+    );
+  },
+
+  "hover preview follows source dimensions and fits the viewport"() {
+    const portrait = media({ width: 1080, height: 1920, preview: { url: "/portrait.webp", expiresAt: null, width: 1080, height: 1920, mimeType: "image/webp" } });
+    const landscape = media({ width: 1920, height: 1080, preview: { url: "/landscape.webp", expiresAt: null, width: 1920, height: 1080, mimeType: "image/webp" } });
+    const portraitSize = hoverPreviewSize(portrait, 1280, 720);
+    const landscapeSize = hoverPreviewSize(landscape, 1280, 720);
+    const shortViewportSize = hoverPreviewSize(portrait, 1280, 420);
+    return check(
+      portraitSize.width / portraitSize.height === 1080 / 1920
+        && landscapeSize.width / landscapeSize.height === 1920 / 1080
+        && portraitSize.width === 267
+        && landscapeSize.width === 267
+        && shortViewportSize.height <= 420 - 32
+        && shortViewportSize.width < portraitSize.width,
+      "hover panel should use each media ratio and shrink tall media within the visible viewport",
     );
   },
 

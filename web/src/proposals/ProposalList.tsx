@@ -11,7 +11,7 @@ type ProposalListProps = {
 
 export function ProposalList({ proposals, selectedProposalId, onSelect }: ProposalListProps) {
   if (proposals.length === 0) {
-    return <p className="proposal-list__empty" role="status">当前分镜没有待处理的 AI 建议。</p>;
+    return <p className="proposal-list__empty" role="status">当前片段没有待处理的 AI 建议。</p>;
   }
 
   return (

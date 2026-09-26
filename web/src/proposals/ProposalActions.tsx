@@ -33,6 +33,9 @@ export function ProposalActions({
   const [message, setMessage] = useState("");
   const [locallyConflicted, setLocallyConflicted] = useState(false);
   const busy = operation === "applying" || operation === "rejecting";
+  const rejectLabel = layout === "toolbar" ? "取消" : "取消建议";
+  const applyLabel = layout === "toolbar" ? "确认" : "确认并应用";
+  const applyProgressLabel = "确认中…";
   const canApply = proposal.status === "pending" && !locallyConflicted && !applyBlockedReason && operation !== "resolved";
   const canReject = (proposal.status === "pending" || proposal.status === "conflicted" || locallyConflicted) && operation !== "resolved";
 
@@ -106,10 +109,10 @@ export function ProposalActions({
       {message ? <p className="proposal-actions__message" role="status">{message}</p> : null}
       <div className="proposal-actions__buttons">
         <button type="button" onClick={() => void reject()} disabled={!canReject || busy}>
-          {operation === "rejecting" ? "取消中…" : layout === "toolbar" ? "取消" : "取消建议"}
+          {operation === "rejecting" ? "取消中…" : rejectLabel}
         </button>
         <button type="button" className="is-primary" onClick={() => void apply()} disabled={!canApply || busy}>
-          {operation === "applying" ? "确认中…" : layout === "toolbar" ? "确认" : "确认并应用"}
+          {operation === "applying" ? applyProgressLabel : applyLabel}
         </button>
       </div>
     </div>
