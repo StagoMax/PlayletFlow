@@ -7,8 +7,8 @@ Story workflow logic is intentionally outside this runtime boundary.
 
 ## Run locally
 
-Prerequisites: Rust, Node.js, pnpm, and a sibling checkout of OpenTopia at
-`../OpenTopia` (the current path dependency in `server/Cargo.toml`).
+Prerequisites: Rust, Node.js, and pnpm. Cargo downloads the pinned public
+OpenTopia commit used by `server/Cargo.toml`.
 
 1. Set the three `OPENTOPIA_*` model variables from `.env.example` in the
    server process environment. The API key must remain server-side.
@@ -29,7 +29,8 @@ the saved provider ID. The server reads that provider profile without modifying
 the database; its `apiKeySource` must be present in the server environment.
 On Windows, `scripts/run-with-opentopia-key.cjs` can launch the server through
 OpenTopia's installed Electron binary and pass one encrypted Desktop key to the
-server in memory. For example, from this repository:
+server in memory. This optional development bridge assumes a sibling OpenTopia
+checkout. For example, from this repository:
 
 ```powershell
 & ..\OpenTopia\node_modules\electron\dist\electron.exe .\scripts\run-with-opentopia-key.cjs '--provider=YOUR_PROVIDER_ID' --smoke
