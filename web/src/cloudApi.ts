@@ -1,5 +1,7 @@
 import type { AgentEvent, Message, Thread, ToolResult } from "./types";
 import { mergeConversationEvents, mergeConversationMessages } from "./conversationMerge";
+import { threadTitleFromPrompt } from "./threadTitle";
+import { migrateLegacyMessageReferences } from "./chat/workspaceReference";
 
 const threadListKey = "videoflow:threads:v1";
 const conversationKey = (threadId: string) => `videoflow:conversation:v1:${threadId}`;
@@ -15,7 +17,14 @@ function read<T>(key: string, fallback: T): T {
 }
 
 function conversation(threadId: string): Conversation {
-  return read<Conversation>(conversationKey(threadId), { messages: [], events: [] });
+  const stored = read<Conversation>(conversationKey(threadId), { messages: [], events: [] });
+  const messages = stored.messages.map(migrateLegacyMessageReferences);
+  if (messages.some((message, index) => message !== stored.messages[index])) {
+    const migrated = { ...stored, messages };
+    save(threadId, migrated);
+    return migrated;
+  }
+  return stored;
 }
 
 function save(threadId: string, value: Conversation) {
@@ -52,6 +61,19 @@ export const cloudApi = {
     localStorage.setItem(threadListKey, JSON.stringify([thread, ...read<Thread[]>(threadListKey, [])]));
     save(thread.id, { messages: [], events: [] });
     return thread;
+  },
+  generateThreadTitle: async (threadId: string, prompt: string, expectedTitle: string) => {
+    const threads = read<Thread[]>(threadListKey, []);
+    const current = threads.find((thread) => thread.id === threadId);
+    if (!current) throw new Error("会话不存在");
+    if (current.title !== expectedTitle) return { thread: current, updated: false };
+    const nextTitle = threadTitleFromPrompt(prompt);
+    if (!nextTitle) throw new Error("会话标题不能为空");
+    const updated = { ...current, title: nextTitle, updatedAt: new Date().toISOString() };
+    localStorage.setItem(threadListKey, JSON.stringify(
+      threads.map((thread) => thread.id === threadId ? updated : thread),
+    ));
+    return { thread: updated, updated: true };
   },
   messages: async (threadId: string, options: { before?: Message; limit?: number } = {}) => {
     const items = conversation(threadId).messages;

@@ -1,5 +1,7 @@
 import { api, cloudMode } from "./api";
 import { mergeConversationEvents, mergeConversationMessages } from "./conversationMerge";
+import { workspaceReferencePart } from "./chat/workspaceReference";
+import type { ConversationSubmission } from "./composer/submission";
 import type { AgentEvent, Message } from "./types";
 
 const initialMessageCount = 60;
@@ -171,13 +173,16 @@ export class ConversationStore {
     this.publish({ events, messages, activeTurnId, sending, cancelling, error });
   }
 
-  async send(content: string) {
+  async send(submission: ConversationSubmission) {
     if (this.state.sending || this.state.activeTurnId || this.state.cancelling) return;
+    const parts = submission.contentParts.map((part) => part.type === "text"
+      ? part
+      : workspaceReferencePart(part.reference));
     const pendingMessage: Message = {
       id: `pending-${crypto.randomUUID()}`,
       threadId: this.threadId,
       role: "user",
-      parts: [{ type: "text", text: content }],
+      parts,
       createdAt: new Date().toISOString(),
     };
     this.publish({ pendingMessage, sending: true, cancelling: false, error: null });
@@ -187,7 +192,7 @@ export class ConversationStore {
         this.cloudTurnController = controller;
         const message: Message = {
           id: crypto.randomUUID(), threadId: this.threadId, role: "user",
-          parts: [{ type: "text", text: content }], createdAt: new Date().toISOString(),
+          parts, createdAt: new Date().toISOString(),
         };
         this.publish({
           messages: mergeConversationMessages(this.state.messages, [message]),
@@ -202,7 +207,7 @@ export class ConversationStore {
         });
         return;
       }
-      const { message, turnId } = await api.send(this.threadId, content);
+      const { message, turnId } = await api.send(this.threadId, submission);
       this.publish({
         messages: mergeConversationMessages(this.state.messages, [message]),
         pendingMessage: null,

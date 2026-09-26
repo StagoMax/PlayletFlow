@@ -2,11 +2,13 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Icon } from "../workspace/Icons";
 import type { WorkspaceThreadBinding } from "./workspaceThreadClient";
+import { conversationHeaderTitle, displayThreadTitle } from "../threadTitle";
 
 type ThreadSwitcherProps = {
   bindings: WorkspaceThreadBinding[];
   activeThreadId: string | null;
   storyboardName: string;
+  threadTitles: Readonly<Record<string, string>>;
   disabled?: boolean;
   onSelect: (threadId: string) => void;
 };
@@ -15,29 +17,6 @@ type MarqueeStyle = CSSProperties & {
   "--thread-title-shift": string;
   "--thread-title-duration": string;
 };
-
-function threadTitle(
-  binding: WorkspaceThreadBinding | undefined,
-  bindings: WorkspaceThreadBinding[],
-  storyboardName: string,
-) {
-  if (!binding) return storyboardName;
-  const chronological = [...bindings].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-  const index = chronological.findIndex((item) => item.threadId === binding.threadId);
-  return index <= 0 ? storyboardName : `${storyboardName} · 会话 ${index + 1}`;
-}
-
-function formatCreatedAt(createdAt: string) {
-  const date = new Date(createdAt);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
-}
 
 function ScrollableTitle({ title }: { title: string }) {
   const viewportRef = useRef<HTMLSpanElement>(null);
@@ -77,6 +56,7 @@ export function ThreadSwitcher({
   bindings,
   activeThreadId,
   storyboardName,
+  threadTitles,
   disabled = false,
   onSelect,
 }: ThreadSwitcherProps) {
@@ -84,7 +64,12 @@ export function ThreadSwitcher({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const activeBinding = bindings.find((item) => item.threadId === activeThreadId);
-  const activeTitle = threadTitle(activeBinding, bindings, storyboardName);
+  const activeTitle = conversationHeaderTitle(
+    displayThreadTitle(
+      activeBinding ? threadTitles[activeBinding.threadId] : undefined,
+      storyboardName,
+    ),
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -124,7 +109,7 @@ export function ThreadSwitcher({
       {open ? (
         <div className="thread-menu" role="menu" aria-label="切换对话">
           {bindings.map((binding) => {
-            const title = threadTitle(binding, bindings, storyboardName);
+            const title = displayThreadTitle(threadTitles[binding.threadId], storyboardName);
             const selected = binding.threadId === activeThreadId;
             return (
               <button
@@ -139,7 +124,7 @@ export function ThreadSwitcher({
                   setOpen(false);
                 }}
               >
-                <span><strong>{title}</strong><small>{formatCreatedAt(binding.createdAt)}</small></span>
+                <span><strong>{title}</strong></span>
                 {selected ? <Icon name="check" /> : null}
               </button>
             );

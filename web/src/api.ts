@@ -1,4 +1,5 @@
 import type { AgentEvent, Message, Thread, ToolResult } from "./types";
+import type { ConversationSubmission } from "./composer/submission";
 import { cloudApi } from "./cloudApi";
 import { fetchWithTimeout } from "./http/fetchWithTimeout";
 
@@ -8,6 +9,11 @@ export type RuntimeInfo = {
   status: string;
   runtime: string;
   model: string | null;
+};
+
+export type GenerateThreadTitleResponse = {
+  thread: Thread;
+  updated: boolean;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -32,6 +38,12 @@ const localApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title }),
     }),
+  generateThreadTitle: (threadId: string, prompt: string, expectedTitle: string) =>
+    request<GenerateThreadTitleResponse>(`/api/threads/${threadId}/title`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, expectedTitle }),
+    }),
   messages: (threadId: string, options: { before?: Message; limit?: number } = {}) => {
     const query = new URLSearchParams({ limit: String(options.limit ?? 61) });
     if (options.before) {
@@ -46,11 +58,15 @@ const localApi = {
     if (options.before !== undefined) query.set("before", String(options.before));
     return request<AgentEvent[]>(`/api/threads/${threadId}/events?${query}`);
   },
-  send: (threadId: string, content: string) =>
+  send: (threadId: string, submission: ConversationSubmission) =>
     request<{ message: Message; turnId: string }>(`/api/threads/${threadId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({
+        contentParts: submission.contentParts.map((part) => part.type === "text"
+          ? part
+          : { type: "asset_ref", assetId: part.reference.id }),
+      }),
     }),
   cancel: (threadId: string, turnId: string | null) =>
     request<{ cancelled: boolean }>(`/api/threads/${threadId}/turn/cancel`, {

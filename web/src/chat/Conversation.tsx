@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComposerAssetReference } from "../composer/types";
+import type { ConversationSubmission } from "../composer/submission";
 import { Icon } from "../workspace/Icons";
 import { ConversationComposer } from "./ConversationComposer";
 import { ConversationTurn } from "./ConversationTurn";
@@ -14,6 +15,8 @@ type ConversationProps = {
   runtimeModel: string | null;
   runtimeModelLoading: boolean;
   onTurnSettled: () => void;
+  onFirstPrompt: (prompt: string) => void;
+  onSelectReference: (reference: ComposerAssetReference) => void;
 };
 
 export function Conversation({
@@ -22,6 +25,8 @@ export function Conversation({
   runtimeModel,
   runtimeModelLoading,
   onTurnSettled,
+  onFirstPrompt,
+  onSelectReference,
 }: ConversationProps) {
   const { store, state } = useConversation(threadId);
   const [draft, setDraft] = useState("");
@@ -62,12 +67,13 @@ export function Conversation({
     void store.loadOlder();
   }
 
-  const send = useCallback((submittedContent: string) => {
-    const content = submittedContent.trim();
+  const send = useCallback((submission: ConversationSubmission) => {
+    const content = submission.plainText.trim();
     if (!content || busy) return;
+    if (!state.messages.some((message) => message.role === "user")) onFirstPrompt(content);
     setDraft("");
-    void store.send(content);
-  }, [busy, store]);
+    void store.send(submission);
+  }, [busy, onFirstPrompt, state.messages, store]);
   const stop = useCallback(() => void store.cancel(), [store]);
 
   return (
@@ -82,7 +88,7 @@ export function Conversation({
             </button>
           ) : null}
           {!state.loading && visibleMessages.length === 0 ? (
-            <div className="empty-state"><h2>当前分镜会话已就绪</h2><p>你可以让 AI 阅读当前分镜并提出修改建议。</p></div>
+            <div className="empty-state"><h2>当前片段会话已就绪</h2><p>你可以让 AI 阅读当前片段并提出修改建议。</p></div>
           ) : null}
           {turns.map((turn) => (
             <ConversationTurn
@@ -91,6 +97,8 @@ export function Conversation({
               threadId={threadId}
               pending={turn.key === pendingTurnKey}
               cancelling={state.cancelling && (turn.turnId === state.activeTurnId || turn.key === pendingTurnKey)}
+              assets={assets}
+              onSelectReference={onSelectReference}
             />
           ))}
           </div>

@@ -1,4 +1,5 @@
 import type { AgentEvent, Message } from "../types";
+import { workspaceReferenceFromPart } from "./workspaceReference";
 
 export type ConversationTurn = {
   key: string;
@@ -101,6 +102,17 @@ export function messageText(message: Message) {
     )
     .map((part) => part.text)
     .join("\n");
+}
+
+export function messageClipboardText(message: Message) {
+  return message.parts
+    .flatMap((part) => {
+      if (part.type === "text" && typeof part.text === "string") return [part.text];
+      const reference = workspaceReferenceFromPart(part);
+      return reference ? [`[${reference.name}]`] : [];
+    })
+    .join("")
+    .trim();
 }
 
 function sameTurn(left: ConversationTurn, right: ConversationTurn) {

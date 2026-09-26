@@ -3,7 +3,10 @@ import { ComposerDropOverlay } from "../composer/ComposerDropOverlay";
 import { ComposerSources } from "../composer/ComposerSources";
 import { ComposerToolbar } from "../composer/ComposerToolbar";
 import { referenceMarker } from "../composer/assetMention";
-import { composeSubmissionText } from "../composer/submission";
+import {
+  composeConversationSubmission,
+  type ConversationSubmission,
+} from "../composer/submission";
 import type { ComposerAssetReference } from "../composer/types";
 import { useAssetMention } from "../composer/useAssetMention";
 import { useComposerAttachments } from "../composer/useComposerAttachments";
@@ -17,7 +20,7 @@ type ConversationComposerProps = {
   runtimeModelLoading: boolean;
   assets: readonly ComposerAssetReference[];
   onDraftChange: (value: string) => void;
-  onSend: (content: string) => void;
+  onSend: (submission: ConversationSubmission) => void;
   onStop: () => void;
 };
 
@@ -55,7 +58,7 @@ export const ConversationComposer = memo(function ConversationComposer({
 
   function submit() {
     if (busy || !draft.trim()) return;
-    onSend(composeSubmissionText(draft, references, attachments.attachments));
+    onSend(composeConversationSubmission(draft, references, attachments.attachments));
     setReferences([]);
     attachments.clearAttachments();
     mentions.close();

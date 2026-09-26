@@ -11,14 +11,26 @@ export function workspaceComposerAssets(workspace: StoryboardWorkspace): Compose
       mediaId: item.media.id,
       thumbnailUrl: item.media.thumbnail?.url,
       durationMs: item.media.durationMs,
+      selection: { kind: "item", itemId: item.id },
+      previewMedia: {
+        kind: item.media.kind,
+        status: item.media.status,
+        width: item.media.width,
+        height: item.media.height,
+        durationMs: item.media.durationMs,
+        mimeType: item.media.mimeType,
+        thumbnail: item.media.thumbnail,
+        preview: item.media.preview,
+      },
     }));
 
   const textAssets: ComposerAssetReference[] = [
     {
       id: `script-${workspace.storyboard.id}`,
       kind: "text",
-      name: "分镜脚本",
+      name: "片段脚本",
       textPreview: compactText(workspace.storyboard.script.text),
+      selection: { kind: "script", storyboardId: workspace.storyboard.id },
     },
     ...emptyTextAssets(workspace.navigationTree),
   ];
@@ -37,6 +49,7 @@ function emptyTextAssets(nodes: WorkspaceTreeNode[]): ComposerAssetReference[] {
         kind: "text",
         name: node.name,
         textPreview: "尚未填写内容",
+        selection: node.selection,
       });
     }
   }

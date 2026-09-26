@@ -89,7 +89,7 @@ export function createFixtureWorkspaceThreadClient(runtime: RuntimeThreadCreator
       return readBindings(scope);
     },
     async create(scope) {
-      const thread = await runtime.createThread(`分镜 · ${scope.storyboardName}`);
+      const thread = await runtime.createThread(`片段 · ${scope.storyboardName}`);
       const binding = {
         projectId: scope.projectId,
         storyboardId: scope.storyboardId,

@@ -3,17 +3,22 @@ import { projectTurnActivity } from "./conversationActivityModel";
 import { messageText, type ConversationTurn as ConversationTurnModel } from "./conversationTurnModel";
 import { AssistantMessage, UserMessage } from "./ConversationMessage";
 import { PendingTurnStatus, TurnActivityTimeline } from "./TurnActivityTimeline";
+import type { ComposerAssetReference } from "../composer/types";
 
 export const ConversationTurn = memo(function ConversationTurn({
   turn,
   threadId,
   pending,
   cancelling,
+  assets,
+  onSelectReference,
 }: {
   turn: ConversationTurnModel;
   threadId: string;
   pending: boolean;
   cancelling: boolean;
+  assets: readonly ComposerAssetReference[];
+  onSelectReference: (reference: ComposerAssetReference) => void;
 }) {
   const activity = useMemo(
     () => turn.turnId ? projectTurnActivity(turn.events, cancelling) : null,
@@ -25,7 +30,13 @@ export const ConversationTurn = memo(function ConversationTurn({
 
   return (
     <div className="conversation-turn" data-active={activity?.active || pending || undefined}>
-      {turn.userMessage ? <UserMessage message={turn.userMessage} /> : null}
+      {turn.userMessage ? (
+        <UserMessage
+          message={turn.userMessage}
+          assets={assets}
+          onSelectReference={onSelectReference}
+        />
+      ) : null}
       {pending ? <PendingTurnStatus cancelling={cancelling} /> : null}
       {!pending && activity && (turn.events.length > 0 || activity.active) ? (
         <TurnActivityTimeline activity={activity} threadId={threadId} />
@@ -38,7 +49,7 @@ export const ConversationTurn = memo(function ConversationTurn({
         />
       ) : null}
       {finalMessages.map((message) => (
-        <AssistantMessage key={message.id} text={messageText(message)} createdAt={message.createdAt} />
+        <AssistantMessage key={message.id} text={messageText(message)} />
       ))}
     </div>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { ComposerAssetReference } from "../composer/types";
 import { Conversation } from "./Conversation";
@@ -9,11 +9,14 @@ import type {
   WorkspaceThreadScope,
 } from "./workspaceThreadClient";
 import { Icon } from "../workspace/Icons";
+import { threadTitleFromPrompt } from "../threadTitle";
+import { readRuntimeThreadTitles, resolveHistoricalThreadTitles } from "./workspaceThreadTitles";
 
 type RuntimePanelProps = WorkspaceThreadScope & {
   client: WorkspaceThreadClient;
   assets: readonly ComposerAssetReference[];
   onTurnSettled: () => void;
+  onSelectReference: (reference: ComposerAssetReference) => void;
 };
 
 const initialCreateKeys = new Map<string, string>();
@@ -33,9 +36,18 @@ function initialCreateKey(scope: WorkspaceThreadScope) {
   return value;
 }
 
-export function RuntimePanel({ client, projectId, storyboardId, storyboardName, assets, onTurnSettled }: RuntimePanelProps) {
+export function RuntimePanel({
+  client,
+  projectId,
+  storyboardId,
+  storyboardName,
+  assets,
+  onTurnSettled,
+  onSelectReference,
+}: RuntimePanelProps) {
   const [bindings, setBindings] = useState<WorkspaceThreadBinding[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [threadTitles, setThreadTitles] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -69,6 +81,7 @@ export function RuntimePanel({ client, projectId, storyboardId, storyboardName, 
     activeRequest.current = controller;
     setBindings([]);
     setActiveThreadId(null);
+    setThreadTitles({});
     setError(null);
     setLoading(true);
     const scope = { projectId, storyboardId, storyboardName };
@@ -78,12 +91,24 @@ export function RuntimePanel({ client, projectId, storyboardId, storyboardName, 
         const next = existing.length > 0
           ? existing
           : [await client.create(scope, initialCreateKey(scope), controller.signal)];
+        const runtimeTitles = await readRuntimeThreadTitles(api);
         if (version === requestVersion.current) {
           const remembered = activeThreadIds.get(scopeKey(scope));
           const active = next.some((item) => item.threadId === remembered) ? remembered! : next[0].threadId;
           activeThreadIds.set(scopeKey(scope), active);
           setBindings(next);
           setActiveThreadId(active);
+          setThreadTitles(runtimeTitles);
+          void resolveHistoricalThreadTitles(next, runtimeTitles, api).then((resolved) => {
+            if (version !== requestVersion.current) return;
+            setThreadTitles((current) => {
+              const enriched = { ...current };
+              for (const [threadId, title] of Object.entries(resolved)) {
+                if (current[threadId] === runtimeTitles[threadId]) enriched[threadId] = title;
+              }
+              return enriched;
+            });
+          });
         }
       } catch (cause) {
         if (!controller.signal.aborted && version === requestVersion.current) {
@@ -110,10 +135,21 @@ export function RuntimePanel({ client, projectId, storyboardId, storyboardName, 
         crypto.randomUUID(),
         controller.signal,
       );
+      const runtimeTitles = await readRuntimeThreadTitles(api);
       if (version === requestVersion.current) {
         activeThreadIds.set(scopeKey({ projectId, storyboardId, storyboardName }), next.threadId);
         setBindings((current) => [next, ...current.filter((item) => item.threadId !== next.threadId)]);
         setActiveThreadId(next.threadId);
+        setThreadTitles(runtimeTitles);
+        void resolveHistoricalThreadTitles([next], runtimeTitles, api).then((resolved) => {
+          if (version !== requestVersion.current) return;
+          setThreadTitles((current) => {
+            const title = resolved[next.threadId];
+            return title && current[next.threadId] === runtimeTitles[next.threadId]
+              ? { ...current, [next.threadId]: title }
+              : current;
+          });
+        });
       }
     } catch (cause) {
       if (!controller.signal.aborted && version === requestVersion.current) {
@@ -131,6 +167,22 @@ export function RuntimePanel({ client, projectId, storyboardId, storyboardName, 
     setActiveThreadId(threadId);
   }
 
+  const titleFromFirstPrompt = useCallback((prompt: string) => {
+    if (!activeThreadId) return;
+    const threadId = activeThreadId;
+    const expectedTitle = threadTitles[threadId];
+    const optimisticTitle = threadTitleFromPrompt(prompt);
+    if (!expectedTitle || !optimisticTitle) return;
+    setThreadTitles((current) => ({ ...current, [threadId]: optimisticTitle }));
+    void api.generateThreadTitle(threadId, prompt, expectedTitle)
+      .then(({ thread }) => {
+        setThreadTitles((current) => ({ ...current, [threadId]: thread.title }));
+      })
+      .catch(() => {
+        setThreadTitles((current) => ({ ...current, [threadId]: expectedTitle }));
+      });
+  }, [activeThreadId, threadTitles]);
+
   return (
     <div className="runtime-panel" data-storyboard-id={storyboardId} data-thread-id={binding?.threadId ?? ""}>
       <div className="runtime-toolbar">
@@ -138,6 +190,7 @@ export function RuntimePanel({ client, projectId, storyboardId, storyboardName, 
           bindings={bindings}
           activeThreadId={activeThreadId}
           storyboardName={storyboardName}
+          threadTitles={threadTitles}
           disabled={loading}
           onSelect={selectThread}
         />
@@ -160,7 +213,7 @@ export function RuntimePanel({ client, projectId, storyboardId, storyboardName, 
           </button>
         </div>
       ) : null}
-      {loading ? <div className="center-note">正在连接当前分镜会话…</div> : null}
+      {loading ? <div className="center-note">正在连接当前片段会话…</div> : null}
       {!loading && binding ? (
         <Conversation
           key={binding.threadId}
@@ -169,6 +222,8 @@ export function RuntimePanel({ client, projectId, storyboardId, storyboardName, 
           runtimeModel={runtimeModel}
           runtimeModelLoading={runtimeModelLoading}
           onTurnSettled={onTurnSettled}
+          onFirstPrompt={titleFromFirstPrompt}
+          onSelectReference={onSelectReference}
         />
       ) : null}
     </div>

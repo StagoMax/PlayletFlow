@@ -1,13 +1,16 @@
+import type { HoverPreviewMedia } from "../preview/types";
+import type { WorkspaceReference } from "../chat/workspaceReference";
+import type { WorkspaceSelection } from "../workspace/types";
+
 export type ComposerAssetKind = "image" | "video" | "text";
 
-export type ComposerAssetReference = {
-  id: string;
-  kind: ComposerAssetKind;
-  name: string;
+export type ComposerAssetReference = WorkspaceReference & {
   mediaId?: string;
   thumbnailUrl?: string;
   durationMs?: number | null;
   textPreview?: string;
+  previewMedia?: HoverPreviewMedia;
+  selection: WorkspaceSelection;
 };
 
 export type ComposerAttachment = {

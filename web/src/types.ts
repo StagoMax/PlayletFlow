@@ -1,4 +1,7 @@
-export type MessagePart = { type: "text"; text: string } | { type: string; [key: string]: unknown };
+export type MessagePart =
+  | { type: "text"; text: string }
+  | { type: "file_ref"; path: string }
+  | { type: string; [key: string]: unknown };
 
 export type Message = {
   id: string;

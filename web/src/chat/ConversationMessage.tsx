@@ -1,17 +1,47 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Message } from "../types";
+import type { ComposerAssetReference } from "../composer/types";
 import { Icon } from "../workspace/Icons";
-import { messageText } from "./conversationTurnModel";
+import { messageClipboardText } from "./conversationTurnModel";
+import { MessageReferenceChip } from "./MessageReferenceChip";
+import { workspaceReferenceFromPart } from "./workspaceReference";
 
-export const UserMessage = memo(function UserMessage({ message }: { message: Message }) {
-  const text = messageText(message);
+export const UserMessage = memo(function UserMessage({
+  message,
+  assets,
+  onSelectReference,
+}: {
+  message: Message;
+  assets: readonly ComposerAssetReference[];
+  onSelectReference: (reference: ComposerAssetReference) => void;
+}) {
+  const text = messageClipboardText(message);
+  const assetsById = useMemo(
+    () => new Map(assets.map((asset) => [asset.id, asset])),
+    [assets],
+  );
   return (
     <article className="message user">
       <div className="message-content">
-        <div className="message-body"><span className="message-text">{text}</span></div>
-        <MessageActions text={text} createdAt={message.createdAt} />
+        <div className="message-body">
+          {message.parts.map((part, index) => {
+            if (part.type === "text" && typeof part.text === "string") {
+              return <span className="message-text" key={index}>{part.text}</span>;
+            }
+            const reference = workspaceReferenceFromPart(part);
+            return reference ? (
+              <MessageReferenceChip
+                key={`${reference.id}:${index}`}
+                reference={reference}
+                asset={assetsById.get(reference.id)}
+                onSelectReference={onSelectReference}
+              />
+            ) : null;
+          })}
+        </div>
+        <MessageActions text={text} />
       </div>
     </article>
   );
@@ -19,12 +49,10 @@ export const UserMessage = memo(function UserMessage({ message }: { message: Mes
 
 export const AssistantMessage = memo(function AssistantMessage({
   text,
-  createdAt,
   streaming = false,
   interrupted = false,
 }: {
   text: string;
-  createdAt?: string;
   streaming?: boolean;
   interrupted?: boolean;
 }) {
@@ -37,13 +65,13 @@ export const AssistantMessage = memo(function AssistantMessage({
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
           {streaming ? <span className="stream-cursor" aria-hidden="true" /> : null}
         </div>
-        {!streaming ? <MessageActions text={text} createdAt={createdAt} /> : null}
+        {!streaming ? <MessageActions text={text} /> : null}
       </div>
     </article>
   );
 });
 
-function MessageActions({ text, createdAt }: { text: string; createdAt?: string }) {
+function MessageActions({ text }: { text: string }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
 
   useEffect(() => {
@@ -52,10 +80,8 @@ function MessageActions({ text, createdAt }: { text: string; createdAt?: string 
     return () => window.clearTimeout(timeout);
   }, [copyState]);
 
-  const timestamp = createdAt ? formatTimestamp(createdAt) : null;
   return (
     <div className="message-actions">
-      {timestamp ? <time dateTime={createdAt} title={timestamp.title}>{timestamp.label}</time> : null}
       <button
         type="button"
         className="message-action-button"
@@ -75,15 +101,4 @@ function MessageActions({ text, createdAt }: { text: string; createdAt?: string 
       </span>
     </div>
   );
-}
-
-function formatTimestamp(createdAt: string) {
-  const date = new Date(createdAt);
-  if (!Number.isFinite(date.getTime())) return null;
-  return {
-    label: new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(date),
-    title: new Intl.DateTimeFormat("zh-CN", {
-      year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
-    }).format(date),
-  };
 }

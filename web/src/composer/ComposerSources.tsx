@@ -1,4 +1,5 @@
 import { Icon } from "../workspace/Icons";
+import { HoverPreview } from "../preview/HoverPreview";
 import type { ComposerAssetReference, ComposerAttachment } from "./types";
 
 type ComposerSourcesProps = {
@@ -18,14 +19,11 @@ export function ComposerSources({
   return (
     <div className="shared-composer-sources" aria-label="已添加的资产和附件">
       {references.map((reference) => (
-        <span className="shared-composer-source is-reference" key={`reference:${reference.id}`}>
-          <SourcePreview source={reference} />
-          <span className="shared-composer-source__copy">
-            <strong>@{reference.name}</strong>
-            <small>{kindLabel(reference.kind)}资产</small>
-          </span>
-          <button type="button" onClick={() => onRemoveReference(reference.id)} aria-label={`移除资产引用 ${reference.name}`}>×</button>
-        </span>
+        <ReferenceSource
+          key={`reference:${reference.id}`}
+          reference={reference}
+          onRemove={() => onRemoveReference(reference.id)}
+        />
       ))}
       {attachments.map((attachment) => (
         <span className="shared-composer-source" key={`attachment:${attachment.id}`}>
@@ -41,10 +39,55 @@ export function ComposerSources({
   );
 }
 
+function ReferenceSource({ reference, onRemove }: { reference: ComposerAssetReference; onRemove: () => void }) {
+  const chip = (
+    <span className="shared-composer-source is-reference">
+      <SourcePreview source={reference} />
+      <span className="shared-composer-source__copy">
+        <strong>{reference.name}</strong>
+      </span>
+      <button type="button" onClick={onRemove} aria-label={`移除资产引用 ${reference.name}`}>×</button>
+    </span>
+  );
+  if (!reference.previewMedia) return chip;
+  return (
+    <HoverPreview
+      item={{ name: reference.name, media: reference.previewMedia }}
+      placement="top"
+      openDelayMs={180}
+      className="shared-composer-source-hover"
+    >
+      {chip}
+    </HoverPreview>
+  );
+}
+
 function SourcePreview({ source }: { source: ComposerAssetReference | ComposerAttachment }) {
-  const previewUrl = "file" in source ? source.previewUrl : source.thumbnailUrl;
-  if (source.kind === "image" && previewUrl) {
-    return <img className="shared-composer-source__preview" src={previewUrl} alt="" />;
+  const isAttachment = "file" in source;
+  const previewUrl = isAttachment ? source.previewUrl : source.thumbnailUrl;
+  if (previewUrl && (source.kind === "image" || (!isAttachment && source.kind === "video"))) {
+    return (
+      <img
+        className="shared-composer-source__preview"
+        src={previewUrl}
+        alt=""
+        width={24}
+        height={24}
+        decoding="async"
+      />
+    );
+  }
+  if (isAttachment && source.kind === "video" && previewUrl) {
+    return (
+      <video
+        className="shared-composer-source__preview"
+        src={previewUrl}
+        muted
+        playsInline
+        preload="metadata"
+        aria-hidden="true"
+      />
+    );
   }
   return (
     <span className={`shared-composer-source__preview is-${source.kind}`} aria-hidden="true">
