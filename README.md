@@ -18,11 +18,24 @@ read the [product requirements](docs/product-requirements.md), the
 Prerequisites: Rust, Node.js, and pnpm. Cargo downloads the pinned public
 OpenTopia commit used by `server/Cargo.toml`.
 
-1. Set the three `OPENTOPIA_*` model variables from `.env.example` in the
-   server process environment. The API key must remain server-side.
+1. Set `OPENTOPIA_API_KEY` to a DeepSeek API key in the server process
+   environment. The right-side AI conversation defaults to DeepSeek's
+   OpenAI-compatible endpoint (`https://api.deepseek.com`) and
+   `deepseek-flash`; `OPENTOPIA_OPENAI_BASE_URL` and `OPENTOPIA_MODEL` remain
+   available as explicit overrides. The key must remain server-side. Image and
+   video generation keep their separate Ark configuration. The local product
+   schema uses `VIDEOFLOW_PRODUCT_DB`, defaulting to
+   `.videoflow/product.sqlite`.
 2. In `server/`, run `cargo run`.
 3. In `web/`, run `pnpm install` and `pnpm dev`.
 4. Open `http://127.0.0.1:5173`.
+
+To enable media regeneration after a confirmed AI proposal or a direct prompt edit, set the
+server-only `ARK_API_KEY`. The local server submits Seedream images,
+polls Seedance videos, and persists provider results before their temporary
+URLs expire. The confirmation contract supports a server-approved model choice,
+optional first/last frames, and optional reference keyframes. See
+[the Volcengine generation integration](docs/volcengine-generation.md).
 
 For a command-line provider check, run `cargo run -- --smoke` in `server/`.
 The `runtime_probe` tool has no side effects. Ask the model to call it with a
@@ -46,6 +59,9 @@ checkout. For example, from this repository:
 
 Omit `--smoke` to start the API. This bridge is for the local development
 machine only; a deployed service needs its own server-side secret management.
+To copy the selected provider key from OpenTopia's encrypted local store into
+the linked Vercel project's Production environment without printing or writing
+the plaintext key, use `--sync-vercel-production` instead of `--smoke`.
 
 The local server binds to loopback. The Vercel adapter uses a separate stateless
 turn API; the browser never receives provider keys. See
@@ -58,13 +74,20 @@ domain. The container runs OpenTopia `AgentCore` and `AgentTurnDriver` for each
 request. It does not depend on a persistent server process or local SQLite.
 
 1. Log in with `vercel login`, then run `vercel link` from the repository root.
-2. Add production environment variables to the Vercel project:
-   `OPENTOPIA_OPENAI_BASE_URL`, `OPENTOPIA_MODEL`, `OPENTOPIA_API_KEY`, and
-   `PORT=3000`.
+2. Add `OPENTOPIA_API_KEY` and `PORT=3000` to the Vercel project. The
+   conversation endpoint and model use the DeepSeek defaults above; set
+   `OPENTOPIA_OPENAI_BASE_URL` or `OPENTOPIA_MODEL` only when intentionally
+   overriding them.
    Keep the API key in Vercel's server-side environment settings, never in a
    `VITE_` variable or Git.
-3. Run `vercel deploy --prod` from the repository root.
-4. Verify `/health`, then send a message and ask the model to call
+3. To enable the lightweight Seedream/Seedance demo, also add `ARK_API_KEY`
+   and the server-only `TOS_*` variables shown in `.env.example`. Bootstrap the
+   private bucket once with `cargo run --manifest-path server/Cargo.toml --
+   --bootstrap-tos`. This request-driven mode stores job snapshots and media in
+   TOS and needs neither ECS nor PostgreSQL; see
+   [the generation guide](docs/volcengine-generation.md).
+4. Run `vercel deploy --prod` from the repository root.
+5. Verify `/health`, then send a message and ask the model to call
    `runtime_probe` in the deployed page.
 
 The public demo saves each visitor's threads and event history in that
@@ -72,27 +95,40 @@ browser's local storage. Refresh works; cross-device sync and account recovery
 need a database in a later iteration. The API accepts at most 2,000 characters
 and 40 messages of history per turn. It has a small per-instance rate limiter;
 configure a Vercel Firewall rate rule and a model-provider spending cap for a
-long-running public deployment. The response currently arrives after the
-model turn completes, while the page shows a working state. Local development
-still uses SQLite and SSE.
+long-running public deployment. The cloud response streams OpenTopia
+`AgentEvent` frames as the turn runs and ends with a deduplicated `result`
+snapshot. Local development uses the same interaction projection over SQLite
+and a reconnectable SSE subscription.
 
 ## Boundaries
 
 - `server/src/runtime.rs` owns OpenTopia AgentCore composition and the explicit
-  tool registry. Product-specific tools can be registered here later.
-- `server/src/conversation.rs` owns persistence, event publication, and one
-  active turn per conversation.
+  tool registry. It remains product-agnostic; the composition root will register
+  product tool adapters without moving product rules into this module.
+- `server/src/product/` owns the storyboard product domain, application ports,
+  product API mount point, and versioned SQLite schema.
+- `server/src/conversation.rs` owns persistence, event publication, one
+  cancellable active turn per conversation, and its runtime-safe stop signal.
+- `server/src/conversation_events.rs` owns the shared durable/streaming event
+  projection, including Provider lifecycle visibility and payload redaction.
 - `server/src/history.rs` restores provider-neutral tool calls and results from
   canonical events for later turns.
 - `server/src/api.rs` is the browser contract. Workflow agents can call these
   endpoints without importing OpenTopia internals.
-- `web/src/conversationStore.ts` borrows OpenTopia's bounded history, event
-  batching, and reconnect concepts while keeping a small browser-only surface.
+- `web/src/conversationStore.ts` mirrors OpenTopia's session/controller split:
+  bounded history and live events merge through one projection, while command
+  sending and the active turn remain distinct interaction states.
+- `docs/openapi.json` is the machine-readable product contract;
+  `web/src/productApi/generated.ts` is generated from it and checked by builds.
 
 ## Current boundaries
 
-The tool registry contains only `runtime_probe`. Account-based sync, approval
-resume, cancellation, model settings UI, and media generation are not
-implemented. Prior user/assistant text is included in each new turn along with
+The cloud demo tool registry contains only `runtime_probe`. Account-based sync
+and durable cloud project editing are not implemented in the stateless
+entrypoint. Image/video generation is available through a request-driven TOS
+adapter: direct prompt confirmation supports selectable Seedream/Seedance
+models and optional first/last frames or reference keyframes. The local product
+API additionally includes durable SQLite proposal confirmation. Prior
+user/assistant text is included in each new turn along with
 structured tool calls and results. Long conversations still need context
 budgeting and compaction before production use.

@@ -6,4 +6,9 @@
 server/target/
 web/node_modules/
 web/dist/
+web/.e2e/
+web/test-results/
+web/playwright-report/
 *.log
+/ApiKey*.txt
+/用户信息.csv
