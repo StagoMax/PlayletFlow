@@ -1,5 +1,6 @@
 mod api;
 mod conversation;
+mod history;
 mod runtime;
 
 use anyhow::Result;

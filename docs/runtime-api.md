@@ -32,6 +32,9 @@ The server commits an event before broadcasting it. History reads use bounded
 pages; tool results in conversation pages contain compact previews, while the
 detail endpoint reads the canonical result. The browser batches stream events
 for 32 ms and loads older history on demand.
+The next model turn reads canonical events to rebuild structured tool calls and
+results with their original provider call IDs; display previews are not used as
+model context.
 
 ## Future workflow integration
 

@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use opentopia_core::model::{
-    AgentEvent, AgentEventPayload, ExperienceMode, Message, MessagePart, MessageRole, Thread,
+    AgentEvent, AgentEventPayload, ExperienceMode, Message, MessageRole, Thread,
 };
-use opentopia_core::provider::{ModelConversationMessage, ModelConversationRole, ModelProvider};
+use opentopia_core::provider::{ModelConversationMessage, ModelProvider};
 use opentopia_core::store::{SessionStore, SqliteSessionStore};
 use opentopia_core::tools::ToolRegistry;
 use std::collections::{HashMap, HashSet};
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
-use crate::runtime;
+use crate::{history, runtime};
 
 #[derive(Clone)]
 pub struct ConversationService {
@@ -85,6 +85,13 @@ impl ConversationService {
                 return Err(error);
             }
         };
+        let prior_events = match self.store.list_events(thread_id, None) {
+            Ok(events) => events,
+            Err(error) => {
+                self.active.lock().await.remove(&thread_id);
+                return Err(error);
+            }
+        };
         let user = Message::text(thread_id, MessageRole::User, content.clone());
         if let Err(error) = self.store.append_message(user.clone()) {
             self.active.lock().await.remove(&thread_id);
@@ -99,7 +106,7 @@ impl ConversationService {
                     turn_id,
                     user.id,
                     content,
-                    project_history(&prior),
+                    history::project_history(&prior, &prior_events),
                 )
                 .await;
             service.active.lock().await.remove(&thread_id);
@@ -188,35 +195,6 @@ fn visible_payload(payload: &AgentEventPayload) -> bool {
             | AgentEventPayload::TurnFinished { .. }
             | AgentEventPayload::Error { .. }
     )
-}
-
-fn project_history(messages: &[Message]) -> Vec<ModelConversationMessage> {
-    messages
-        .iter()
-        .filter_map(|message| {
-            let role = match message.role {
-                MessageRole::User => ModelConversationRole::User,
-                MessageRole::Assistant => ModelConversationRole::Assistant,
-                MessageRole::System | MessageRole::Tool => return None,
-            };
-            let content = message
-                .parts
-                .iter()
-                .filter_map(|part| match part {
-                    MessagePart::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            (!content.is_empty()).then_some(ModelConversationMessage {
-                role,
-                content,
-                content_parts: Vec::new(),
-                tool_calls: Vec::new(),
-                tool_results: Vec::new(),
-            })
-        })
-        .collect()
 }
 
 #[cfg(test)]

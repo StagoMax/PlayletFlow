@@ -49,6 +49,8 @@ must never receive provider keys. See [the API handoff](docs/runtime-api.md).
   tool registry. Product-specific tools can be registered here later.
 - `server/src/conversation.rs` owns persistence, event publication, and one
   active turn per conversation.
+- `server/src/history.rs` restores provider-neutral tool calls and results from
+  canonical events for later turns.
 - `server/src/api.rs` is the browser contract. Workflow agents can call these
   endpoints without importing OpenTopia internals.
 - `web/src/conversationStore.ts` borrows OpenTopia's bounded history, event
@@ -59,5 +61,5 @@ must never receive provider keys. See [the API handoff](docs/runtime-api.md).
 The tool registry contains only `runtime_probe`. Multi-user authentication,
 approval resume, cancellation, model settings UI, media generation, and public
 deployment are not implemented. Prior user/assistant text is included in each
-new turn; cross-turn structured tool transcript replay still needs to be wired
-before relying on long tool-heavy conversations.
+new turn along with structured tool calls and results. Long conversations still
+need context budgeting and compaction before production use.
