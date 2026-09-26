@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/preview/**/*.ts",
+    "src/preview/**/*.tsx",
+    "src/workspace/**/*.ts",
+    "src/workspace/**/*.tsx",
+    "src/navigator/**/*.tsx",
+    "src/storyboards/**/*.tsx",
+    "src/productApi/**/*.ts"
+  ],
+  "exclude": ["src/assets"]
+}

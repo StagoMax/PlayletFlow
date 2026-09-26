@@ -5,8 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit"
+    "build": "pnpm contract:check && tsc --noEmit && vite build",
+    "typecheck": "pnpm contract:check && tsc --noEmit",
+    "typecheck:preview": "pnpm contract:check && tsc -p tsconfig.preview.json",
+    "test:assets-proposals": "node scripts/test-assets-proposals.mjs",
+    "test:preview": "node scripts/test-preview.mjs",
+    "test:e2e": "playwright test",
+    "test:acceptance": "cargo test --manifest-path ../server/Cargo.toml && playwright test",
+    "contract:generate": "node scripts/generate-product-contract.mjs",
+    "contract:check": "node scripts/generate-product-contract.mjs --check"
   },
   "dependencies": {
     "react": "19.2.3",
@@ -15,6 +22,7 @@
     "remark-gfm": "4.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.4",
