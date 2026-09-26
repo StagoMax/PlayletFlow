@@ -5,6 +5,14 @@ This repository is the minimal browser-visible integration of OpenTopia's
 round-trip, persisted messages/events, cursor-based history loading, and SSE.
 Story workflow logic is intentionally outside this runtime boundary.
 
+## Product workspace documentation
+
+The planned storyboard workspace is specified separately from the current
+runtime foundation. Start with the [documentation index](docs/README.md), then
+read the [product requirements](docs/product-requirements.md), the
+[product API contract](docs/product-api.md), and the
+[module and multi-agent delivery plan](docs/modules-and-agent-plan.md).
+
 ## Run locally
 
 Prerequisites: Rust, Node.js, and pnpm. Cargo downloads the pinned public
@@ -51,7 +59,8 @@ request. It does not depend on a persistent server process or local SQLite.
 
 1. Log in with `vercel login`, then run `vercel link` from the repository root.
 2. Add production environment variables to the Vercel project:
-   `OPENTOPIA_OPENAI_BASE_URL`, `OPENTOPIA_MODEL`, and `OPENTOPIA_API_KEY`.
+   `OPENTOPIA_OPENAI_BASE_URL`, `OPENTOPIA_MODEL`, `OPENTOPIA_API_KEY`, and
+   `PORT=3000`.
    Keep the API key in Vercel's server-side environment settings, never in a
    `VITE_` variable or Git.
 3. Run `vercel deploy --prod` from the repository root.
