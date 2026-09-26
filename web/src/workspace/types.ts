@@ -30,6 +30,7 @@ export type WorkspaceObjectNode = {
   id: string;
   name: string;
   objectType: WorkspaceObjectType;
+  mediaId?: string;
   selection: WorkspaceSelection;
 };
 
@@ -49,10 +50,11 @@ export type WorkspaceSnapshot = {
   initialStoryboardId: string;
 };
 
-export type WorkspaceSelection =
+export type WorkspaceSelection = (
   | { kind: "script"; storyboardId: string }
   | { kind: "item"; itemId: string }
-  | { kind: "emptyObject"; objectId: string; objectType: WorkspaceObjectType };
+  | { kind: "emptyObject"; objectId: string; objectType: WorkspaceObjectType }
+) & { nodeId?: string };
 
 export type WorkspaceState = {
   currentStoryboardId: string;
@@ -66,5 +68,5 @@ export type WorkspaceAction =
 export type WorkspaceResource =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "empty"; projectName: string }
+  | { status: "empty"; data: WorkspaceSnapshot }
   | { status: "ready"; data: WorkspaceSnapshot };

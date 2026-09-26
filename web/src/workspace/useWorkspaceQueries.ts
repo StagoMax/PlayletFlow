@@ -14,7 +14,7 @@ function reducer(state: QueryState, action: QueryAction): QueryState {
   if (action.type === "loading") return { status: "loading", request: action.request };
   if (action.type === "failed") return { status: "error", message: action.message, request: action.request };
   if (action.data.storyboards.length === 0) {
-    return { status: "empty", projectName: action.data.project.name, request: action.request };
+    return { status: "empty", data: action.data, request: action.request };
   }
   return { status: "ready", data: action.data, request: action.request };
 }

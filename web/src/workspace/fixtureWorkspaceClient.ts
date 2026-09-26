@@ -10,19 +10,22 @@ import type {
   StoryboardScript,
   StoryboardSummary,
 } from "../productApi/generated";
-import { createAssetWorkspaceClient } from "../assets/assetWorkspaceClient";
 import type { NavigatorGroup, StoryboardWorkspace, WorkspaceSnapshot } from "./types";
+import { cloneNavigatorGroup, copyStoryboardWorkspace, hydrateFixtureStoryboards } from "./fixtureStoryboardSnapshots";
+import { withStoryboardOrder, withoutStoryboard } from "./storyboardOrder";
 import { createCloudGenerationClient } from "../generation/cloudGenerationClient";
-import { appendTreeNode, createNavigationTree, findFolder } from "./resourceTree";
+import { appendTreeNode, createNavigationTree, findFolder, findTreeNode, mergeWorkspaceTrees, removeTreeNode, renameTreeNode } from "./resourceTree";
 import { createStoryboardClient } from "../storyboards/storyboardClient";
 import type { WorkspaceClient } from "./workspaceClient";
+import { FIXTURE_VIDEO_PREVIEW_MIME_TYPE, FIXTURE_VIDEO_PREVIEW_URL } from "./fixtureVideoPreview";
 import {
   createWorkspaceNodeClient,
+  ensurePersistedFolderPath,
   workspaceTreeFromNodes,
   workspaceTreeNodeFromNode,
 } from "./workspaceNodeClient";
 
-export type WorkspaceFixtureMode = "ready" | "empty" | "error" | "slow" | "acceptance";
+export type WorkspaceFixtureMode = "live" | "ready" | "empty" | "error" | "slow" | "acceptance";
 
 const project: Project = {
   id: "10000000-0000-4000-8000-000000000001",
@@ -34,8 +37,8 @@ const project: Project = {
 
 const generationModels: GenerationModel[] = [
   {
-    id: "doubao-seedream-4-0-250828",
-    label: "Seedream 4.0 · 省钱",
+    id: "doubao-seedream-5-0-260128",
+    label: "Seedream 5.0 Lite",
     kind: "image",
     supportsFirstLastFrames: false,
     maxReferenceImages: 10,
@@ -120,8 +123,10 @@ function item(storyboardId: string, fixture: FixtureItem) {
     status,
     revision: 2,
     thumbnail: status === "placeholder" ? null : access,
-    preview: status === "ready" && kind === "image"
-      ? { ...access, mimeType: "image/svg+xml" }
+    preview: status === "ready"
+      ? kind === "image"
+        ? { ...access, mimeType: "image/svg+xml" }
+        : { ...access, url: FIXTURE_VIDEO_PREVIEW_URL, mimeType: FIXTURE_VIDEO_PREVIEW_MIME_TYPE }
       : null,
     generation: {
       jobId: `job-${fixture.id}`,
@@ -176,7 +181,7 @@ function assetGroups(storyboardId: string, index: number): NavigatorGroup[] {
       name: "场景",
       kind: "scene",
       items: [
-        item(storyboardId, { id: `scene-harbor-${suffix}`, name: index > 12 ? "高塔外围" : "雨夜旧码头", description: "当前分镜的主环境视图", label: "场景", prompt: "雨夜工业港口，湿润地面反射青蓝霓虹，电影感广角", accent: "#21b8c7", role: "assetView", width: 1600, height: 900 }),
+        item(storyboardId, { id: `scene-harbor-${suffix}`, name: index > 12 ? "高塔外围" : "雨夜旧码头", description: "当前片段的主环境视图", label: "场景", prompt: "雨夜工业港口，湿润地面反射青蓝霓虹，电影感广角", accent: "#21b8c7", role: "assetView", width: 1600, height: 900 }),
       ],
     },
     {
@@ -195,12 +200,12 @@ function videoGroups(storyboardId: string, index: number): NavigatorGroup[] {
   return [
     {
       id: `${storyboardId}-keyframes`,
-      name: "分镜关键帧",
+      name: "片段关键帧",
       kind: "keyframe",
       items: [
         item(storyboardId, { id: `first-frame-${suffix}`, name: "首帧", description: "镜头开始时的构图", label: "首帧", prompt: "低机位广角，人物从画面左侧进入，港口灯光形成纵深", accent: "#475bd8", role: "firstFrame", width: 1600, height: 900 }),
-        item(storyboardId, { id: `key-frame-${suffix}`, name: "关键帧", description: "动作节奏的视觉锚点", label: "关键帧", prompt: `第 ${index} 个分镜的动作高潮，动态构图，保留角色与场景一致性`, accent: "#a652d1", role: "keyframe", width: 1600, height: 900 }),
-        item(storyboardId, { id: `last-frame-${suffix}`, name: "尾帧", description: "为下一个分镜预留运动方向", label: "尾帧", prompt: "主体停在右侧三分线，镜头朝下一个场景运动方向留白", accent: "#3545a1", role: "lastFrame", width: 1600, height: 900 }),
+        item(storyboardId, { id: `key-frame-${suffix}`, name: "关键帧", description: "动作节奏的视觉锚点", label: "关键帧", prompt: `第 ${index} 个片段的动作高潮，动态构图，保留角色与场景一致性`, accent: "#a652d1", role: "keyframe", width: 1600, height: 900 }),
+        item(storyboardId, { id: `last-frame-${suffix}`, name: "尾帧", description: "为下一个片段预留运动方向", label: "尾帧", prompt: "主体停在右侧三分线，镜头朝下一个场景运动方向留白", accent: "#3545a1", role: "lastFrame", width: 1600, height: 900 }),
       ],
     },
     {
@@ -239,14 +244,14 @@ function storyboardWorkspace(summary: StoryboardSummary): StoryboardWorkspace {
 function createSnapshot(count = storyboardNames.length, initialIndex = 11): WorkspaceSnapshot {
   const names = Array.from(
     { length: count },
-    (_, index) => storyboardNames[index] ?? `验收分镜 ${index + 1}`,
+    (_, index) => storyboardNames[index] ?? `验收片段 ${index + 1}`,
   );
   const storyboards = names.map((name, index) => storyboardSummary(index, name));
   return {
     project,
     storyboards,
     workspaces: Object.fromEntries(storyboards.map((storyboard) => [storyboard.id, storyboardWorkspace(storyboard)])),
-    initialStoryboardId: storyboards[Math.min(initialIndex, storyboards.length - 1)].id,
+    initialStoryboardId: storyboards[Math.min(initialIndex, storyboards.length - 1)]?.id ?? "",
   };
 }
 
@@ -266,16 +271,27 @@ function delay(duration: number, signal: AbortSignal) {
 
 export function fixtureModeFromLocation(): WorkspaceFixtureMode {
   const mode = new URLSearchParams(window.location.search).get("fixture");
-  return mode === "empty" || mode === "error" || mode === "slow" || mode === "acceptance" ? mode : "ready";
+  return mode === "ready" || mode === "empty" || mode === "error" || mode === "slow" || mode === "acceptance" ? mode : "live";
 }
 
-export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "ready"): WorkspaceClient {
-  let snapshot = mode === "acceptance" ? createSnapshot(200, 136) : createSnapshot();
+export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "live"): WorkspaceClient {
+  let snapshot = mode === "acceptance" ? createSnapshot(200, 136) : mode === "live" ? createSnapshot(0) : createSnapshot();
   const generationRequests = new Map<string, { fingerprint: string; job: GenerationJob }>();
   const cloudGeneration = import.meta.env.PROD ? createCloudGenerationClient() : null;
   const nodeClient = import.meta.env.PROD ? null : createWorkspaceNodeClient();
-  const assetClient = createAssetWorkspaceClient();
   const storyboardClient = createStoryboardClient();
+  const isSeededStoryboard = (storyboardId: string) => /^20000000-0000-4000-8000-\d{12}$/.test(storyboardId);
+  const isCopiedStoryboard = (storyboardId: string) => {
+    try { return Boolean(window.localStorage.getItem(`videoflow:storyboard-source:${storyboardId}`)); }
+    catch { return false; }
+  };
+  const reconcileTree = (workspace: StoryboardWorkspace, storyboardId: string, nodes: import("../productApi/generated").WorkspaceNode[]) => {
+    const persisted = workspaceTreeFromNodes(nodes);
+    const fixtureHasMedia = [...workspace.assetGroups, ...workspace.videoGroups].some((group) => group.items.length > 0);
+    const authoritative = isSeededStoryboard(storyboardId) || isCopiedStoryboard(storyboardId)
+      || !fixtureHasMedia || nodes.some((node) => node.targetType === "media");
+    return authoritative ? persisted : mergeWorkspaceTrees(workspace.navigationTree, persisted);
+  };
   if (mode === "empty") {
     snapshot = { ...snapshot, storyboards: [], workspaces: {}, initialStoryboardId: "" };
   }
@@ -288,7 +304,11 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "ready
     if (!nodeClient) return null;
     try {
       const nodes = await nodeClient.list(projectId, storyboardId, signal);
-      return nodes.length === 0 ? null : workspaceTreeFromNodes(nodes);
+      const workspace = snapshot.workspaces[storyboardId];
+      if (!workspace) return null;
+      const navigationTree = reconcileTree(workspace, storyboardId, nodes);
+      snapshot = updateNavigationTree(snapshot, storyboardId, navigationTree);
+      return navigationTree;
     } catch (cause) {
       if (signal?.aborted) throw cause;
       console.warn("[workspace] optional persisted resource tree is unavailable; using fixture data", cause);
@@ -310,6 +330,15 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "ready
       if (mode === "slow") await delay(3_000, signal);
       else if (signal.aborted) throw signal.reason;
       if (mode === "error") throw new Error("无法加载工作区数据，请检查网络后重试。");
+      if (mode === "live" || mode === "ready") {
+        try {
+          snapshot = await hydrateFixtureStoryboards(snapshot, storyboardClient, signal);
+        } catch (cause) {
+          if (signal.aborted) throw cause;
+          if (mode === "live") throw cause;
+          console.warn("[workspace] storyboard list is unavailable; using the local fixture snapshot", cause);
+        }
+      }
       const initialWorkspace = snapshot.workspaces[snapshot.initialStoryboardId];
       if (initialWorkspace) {
         const script = await loadScript(snapshot.project.id, snapshot.initialStoryboardId, signal);
@@ -320,8 +349,6 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "ready
       // keeping them out of this path makes reload independent of backend I/O.
       return snapshot;
     },
-    listAssetBindings: (projectId, storyboardId, signal) =>
-      assetClient.listBindings(projectId, storyboardId, signal),
     async createStoryboard(projectId, request, idempotencyKey, signal) {
       const response = await storyboardClient.create(projectId, request, idempotencyKey, signal);
       const source = request.reuseAssetsFrom
@@ -337,12 +364,47 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "ready
       const sourceIndex = snapshot.storyboards.findIndex((item) => item.id === request.insertAfterId);
       const storyboards = [...snapshot.storyboards];
       storyboards.splice(sourceIndex + 1, 0, response.storyboard);
+      snapshot = withStoryboardOrder({
+        ...snapshot,
+        initialStoryboardId: snapshot.initialStoryboardId || response.storyboard.id,
+      }, storyboards, { [response.storyboard.id]: workspace });
+      return { ...response, workspace };
+    },
+    async duplicateStoryboard(projectId, storyboardId, idempotencyKey, signal) {
+      const storyboard = await storyboardClient.duplicate(projectId, storyboardId, idempotencyKey, signal);
+      const source = requireWorkspace(snapshot, projectId, storyboardId);
+      const workspace = copyStoryboardWorkspace(source, storyboard);
+      try { window.localStorage.setItem(`videoflow:storyboard-source:${storyboard.id}`, storyboardId); } catch { /* storage unavailable */ }
+      const storyboards = [...snapshot.storyboards];
+      const index = storyboards.findIndex((item) => item.id === storyboardId);
+      storyboards.splice(index + 1, 0, storyboard);
+      snapshot = withStoryboardOrder(snapshot, storyboards, { [storyboard.id]: workspace });
+      return { storyboard, workspace };
+    },
+    async reorderStoryboard(projectId, storyboardId, request, idempotencyKey, signal) {
+      const updated = await storyboardClient.reorder(projectId, storyboardId, request, idempotencyKey, signal);
+      const storyboards = snapshot.storyboards.filter((item) => item.id !== storyboardId);
+      const index = storyboards.findIndex((item) => item.id === (request.beforeId ?? request.afterId));
+      storyboards.splice(index + (request.afterId ? 1 : 0), 0, updated);
+      snapshot = withStoryboardOrder(snapshot, storyboards);
+      return updated;
+    },
+    async renameStoryboard(projectId, storyboardId, rawName, expectedRevision) {
+      const name = validateResourceName(rawName);
+      const updated = await storyboardClient.update(projectId, storyboardId, { name, expectedRevision });
+      const workspace = requireWorkspace(snapshot, projectId, storyboardId);
       snapshot = {
         ...snapshot,
-        storyboards: storyboards.map((storyboard, index) => ({ ...storyboard, index: index + 1 })),
-        workspaces: { ...snapshot.workspaces, [response.storyboard.id]: workspace },
+        storyboards: snapshot.storyboards.map((item) => item.id === storyboardId ? { ...item, ...updated } : item),
+        workspaces: { ...snapshot.workspaces, [storyboardId]: {
+          ...workspace, storyboard: updated,
+        } },
       };
-      return { ...response, workspace };
+      return updated;
+    },
+    async deleteStoryboard(projectId, storyboardId, expectedRevision) {
+      await storyboardClient.delete(projectId, storyboardId, expectedRevision);
+      snapshot = withoutStoryboard(snapshot, storyboardId);
     },
     loadNavigationTree,
     loadScript,
@@ -354,7 +416,7 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "ready
     async updateScript(projectId, storyboardId, request, signal) {
       if (projectId !== snapshot.project.id) throw new Error("项目不存在，无法保存脚本。");
       const workspace = snapshot.workspaces[storyboardId];
-      if (!workspace) throw new Error("分镜不存在，无法保存脚本。");
+      if (!workspace) throw new Error("片段不存在，无法保存脚本。");
       if (Array.from(request.text).length > 20_000) {
         throw new Error("脚本不能超过 20,000 个字符。");
       }
@@ -367,9 +429,12 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "ready
       const workspace = requireWorkspace(snapshot, projectId, storyboardId);
       const name = validateResourceName(rawName);
       validateParentFolder(workspace, parentId);
+      const persistedParentId = nodeClient
+        ? await ensurePersistedFolderPath(nodeClient, projectId, storyboardId, workspace.navigationTree, parentId, signal)
+        : parentId;
       const node = nodeClient
         ? workspaceTreeNodeFromNode(await nodeClient.create(projectId, storyboardId, {
-            parentId,
+            parentId: persistedParentId,
             kind: "folder",
             name,
             objectType: null,
@@ -384,9 +449,12 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "ready
       const workspace = requireWorkspace(snapshot, projectId, storyboardId);
       const name = validateResourceName(rawName);
       validateParentFolder(workspace, parentId);
+      const persistedParentId = nodeClient
+        ? await ensurePersistedFolderPath(nodeClient, projectId, storyboardId, workspace.navigationTree, parentId, signal)
+        : parentId;
       const node = nodeClient
         ? workspaceTreeNodeFromNode(await nodeClient.create(projectId, storyboardId, {
-            parentId,
+            parentId: persistedParentId,
             kind: "object",
             name,
             objectType,
@@ -404,6 +472,44 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "ready
       if (node.kind !== "object") throw new Error("服务端返回了无效的对象节点。");
       snapshot = updateNavigationTree(snapshot, storyboardId, appendTreeNode(workspace.navigationTree, parentId, node));
       return node;
+    },
+    async renameNode(projectId, storyboardId, nodeId, rawName) {
+      const workspace = requireWorkspace(snapshot, projectId, storyboardId);
+      const node = findTreeNode(workspace.navigationTree, nodeId);
+      if (!node) throw new Error("资源不存在，请刷新后重试。");
+      const name = validateResourceName(rawName);
+      if (nodeClient) {
+        const saved = (await nodeClient.list(projectId, storyboardId)).find((entry) => entry.id === nodeId);
+        if (!saved) throw new Error("该资源尚未同步到服务端，请刷新后重试。");
+        await nodeClient.update(projectId, storyboardId, nodeId, {
+          parentId: saved.parentId, name, expectedRevision: saved.revision,
+        });
+      }
+      const tree = renameTreeNode(workspace.navigationTree, nodeId, name);
+      snapshot = updateNavigationTree(snapshot, storyboardId, tree);
+      return tree;
+    },
+    async deleteNode(projectId, storyboardId, nodeId) {
+      const workspace = requireWorkspace(snapshot, projectId, storyboardId);
+      if (!findTreeNode(workspace.navigationTree, nodeId)) throw new Error("资源不存在，请刷新后重试。");
+      if (nodeClient) {
+        const saved = (await nodeClient.list(projectId, storyboardId)).find((entry) => entry.id === nodeId);
+        if (!saved) throw new Error("该资源尚未同步到服务端，请刷新后重试。");
+        await nodeClient.delete(projectId, storyboardId, nodeId, saved.revision);
+      }
+      const tree = removeTreeNode(workspace.navigationTree, nodeId);
+      snapshot = updateNavigationTree(snapshot, storyboardId, tree);
+      return tree;
+    },
+    async copyNode(projectId, storyboardId, nodeId) {
+      const workspace = requireWorkspace(snapshot, projectId, storyboardId);
+      if (!findTreeNode(workspace.navigationTree, nodeId)) throw new Error("资源不存在，请刷新后重试。");
+      if (!nodeClient) throw new Error("当前环境无法复制资源。");
+      await nodeClient.copy(projectId, storyboardId, nodeId);
+      const nodes = await nodeClient.list(projectId, storyboardId);
+      const tree = reconcileTree(workspace, storyboardId, nodes);
+      snapshot = updateNavigationTree(snapshot, storyboardId, tree);
+      return tree;
     },
     async requestMediaGeneration(projectId, storyboardId, mediaId, request, idempotencyKey, signal) {
       if (cloudGeneration) {
@@ -434,7 +540,7 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "ready
       }
       if (projectId !== snapshot.project.id) throw new Error("项目不存在，无法提交生成任务。");
       const workspace = snapshot.workspaces[storyboardId];
-      if (!workspace) throw new Error("分镜不存在，无法提交生成任务。");
+      if (!workspace) throw new Error("片段不存在，无法提交生成任务。");
       const groups = [...workspace.assetGroups, ...workspace.videoGroups];
       const selected = groups.flatMap((group) => group.items).find((entry) => entry.media.id === mediaId);
       if (!selected) throw new Error("媒体不存在，无法提交生成任务。");
@@ -467,7 +573,7 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "ready
               generateAudio: generation.generateAudio ?? false,
             }
           : {
-              model: generation.model || "doubao-seedream-4-0-250828",
+              model: generation.model || "doubao-seedream-5-0-260128",
               input: generation.input ?? { type: "textOnly" },
               imageSize: generation.imageSize ?? "2K",
               videoResolution: null,
@@ -517,17 +623,6 @@ function updateScriptSnapshot(
   };
 }
 
-function cloneNavigatorGroup(group: NavigatorGroup): NavigatorGroup {
-  return {
-    ...group,
-    items: group.items.map((item) => ({
-      ...item,
-      subject: item.subject ? { ...item.subject } : undefined,
-      media: { ...item.media },
-    })),
-  };
-}
-
 function updateGenerationSnapshot(
   snapshot: WorkspaceSnapshot,
   storyboardId: string,
@@ -574,7 +669,7 @@ function updateGenerationSnapshot(
 function requireWorkspace(snapshot: WorkspaceSnapshot, projectId: string, storyboardId: string) {
   if (projectId !== snapshot.project.id) throw new Error("项目不存在，无法创建内容。");
   const workspace = snapshot.workspaces[storyboardId];
-  if (!workspace) throw new Error("分镜不存在，无法创建内容。");
+  if (!workspace) throw new Error("片段不存在，无法创建内容。");
   return workspace;
 }
 

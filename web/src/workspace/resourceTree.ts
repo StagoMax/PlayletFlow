@@ -16,7 +16,7 @@ export function createNavigationTree(
       {
         kind: "object",
         id: `script-${storyboardId}`,
-        name: "该分镜的脚本",
+        name: "该片段的脚本",
         objectType: "text",
         selection: { kind: "script", storyboardId },
       },
@@ -57,6 +57,51 @@ export function findFolder(nodes: WorkspaceTreeNode[], folderId: string | null):
   return null;
 }
 
+export function folderChain(nodes: WorkspaceTreeNode[], folderId: string): WorkspaceFolderNode[] | null {
+  for (const node of nodes) {
+    if (node.kind !== "folder") continue;
+    if (node.id === folderId) return [node];
+    const nested = folderChain(node.children, folderId);
+    if (nested) return [node, ...nested];
+  }
+  return null;
+}
+
+export function mergeWorkspaceTrees(
+  base: WorkspaceTreeNode[],
+  persisted: WorkspaceTreeNode[],
+): WorkspaceTreeNode[] {
+  return mergeNodes(base, persisted, true);
+}
+
+function mergeNodes(base: WorkspaceTreeNode[], persisted: WorkspaceTreeNode[], isRoot: boolean): WorkspaceTreeNode[] {
+  // A seeded or copied storyboard has a complete canonical media tree.
+  if (isRoot && containsMediaTarget(base) && containsMediaTarget(persisted)) {
+    return persisted;
+  }
+  const persistedById = new Map(persisted.map((node) => [node.id, node]));
+  const merged = base.map((node): WorkspaceTreeNode => {
+    let saved = persistedById.get(node.id);
+    if (!saved) {
+      const matches = [...persistedById.values()].filter((candidate) => node.kind === "folder"
+        ? candidate.kind === "folder" && candidate.name === node.name
+        : candidate.kind === "object" && selectionMatches(candidate.selection, node.selection));
+      if (matches.length === 1) saved = matches[0];
+    }
+    if (!saved) return node;
+    persistedById.delete(saved.id);
+    if (node.kind !== "folder" || saved.kind !== "folder") return saved;
+    return { ...saved, children: mergeNodes(node.children, saved.children, false) };
+  });
+  return [...merged, ...persistedById.values()];
+}
+
+function containsMediaTarget(nodes: WorkspaceTreeNode[]): boolean {
+  return nodes.some((node) => node.kind === "folder"
+    ? containsMediaTarget(node.children)
+    : node.selection.kind === "item");
+}
+
 export function findObject(nodes: WorkspaceTreeNode[], objectId: string): WorkspaceObjectNode | null {
   for (const node of nodes) {
     if (node.kind === "object" && node.id === objectId) return node;
@@ -66,6 +111,40 @@ export function findObject(nodes: WorkspaceTreeNode[], objectId: string): Worksp
     }
   }
   return null;
+}
+
+export function findTreeNode(nodes: WorkspaceTreeNode[], id: string): WorkspaceTreeNode | null {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    if (node.kind === "folder") {
+      const found = findTreeNode(node.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+export function renameTreeNode(nodes: WorkspaceTreeNode[], id: string, name: string): WorkspaceTreeNode[] {
+  return nodes.map((node) => node.id === id
+    ? { ...node, name }
+    : node.kind === "folder" ? { ...node, children: renameTreeNode(node.children, id, name) } : node);
+}
+
+export function removeTreeNode(nodes: WorkspaceTreeNode[], id: string): WorkspaceTreeNode[] {
+  return nodes.filter((node) => node.id !== id).map((node) => node.kind === "folder"
+    ? { ...node, children: removeTreeNode(node.children, id) } : node);
+}
+
+export function nodeContainsSelection(node: WorkspaceTreeNode, selection: WorkspaceSelection): boolean {
+  return node.kind === "folder"
+    ? node.children.some((child) => nodeContainsSelection(child, selection))
+    : selection.nodeId ? node.id === selection.nodeId : selectionMatches(node.selection, selection);
+}
+
+export function mediaBackedObjectIds(nodes: WorkspaceTreeNode[]): string[] {
+  return nodes.flatMap((node) => node.kind === "folder"
+    ? mediaBackedObjectIds(node.children)
+    : node.mediaId ? [node.id] : []);
 }
 
 export function folderPath(nodes: WorkspaceTreeNode[], folderId: string | null): string[] {

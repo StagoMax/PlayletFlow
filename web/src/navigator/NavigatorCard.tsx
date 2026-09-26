@@ -12,7 +12,7 @@ type NavigatorCardProps = {
 export function NavigatorCard({ item, selected, onSelect }: NavigatorCardProps) {
   const navigationName = item.navigationName ?? item.name;
   return (
-    <HoverPreview item={item}>
+    <HoverPreview item={item} disabled={selected}>
       <button
         type="button"
         className={`navigator-card${selected ? " selected" : ""}`}

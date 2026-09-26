@@ -18,23 +18,30 @@ type SavePhase = "idle" | "saving" | "error";
 type ScriptEditorProps = {
   storyboard: StoryboardDetail;
   onSave: (text: string, expectedRevision: number) => Promise<StoryboardScript>;
+  onSaved?: () => void;
   review?: (state: { dirty: boolean; revision: number }) => {
+    id: string;
     actions: ReactNode;
     text: string;
   } | null;
 };
 
-export function ScriptEditor({ storyboard, onSave, review }: ScriptEditorProps) {
-  const [draft, setDraft] = useState(() => readDraft(storyboard) ?? storyboard.script.text);
+export function ScriptEditor({ storyboard, onSave, onSaved, review }: ScriptEditorProps) {
+  const [restoredDraft] = useState(() => readDraft(storyboard));
+  const [draft, setDraft] = useState(restoredDraft?.text ?? storyboard.script.text);
   const [savedText, setSavedText] = useState(storyboard.script.text);
   const [revision, setRevision] = useState(storyboard.script.revision);
   const [updatedAt, setUpdatedAt] = useState(storyboard.script.updatedAt);
   const [phase, setPhase] = useState<SavePhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [incoming, setIncoming] = useState<StoryboardScript | null>(null);
+  const [editingReviewId, setEditingReviewId] = useState<string | null>(restoredDraft?.reviewId ?? null);
+  const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null);
   const characterCount = useMemo(() => Array.from(draft).length, [draft]);
   const dirty = draft !== savedText;
-  const reviewState = review?.({ dirty, revision }) ?? null;
+  const candidateReview = review?.({ dirty: dirty || editingReviewId !== null, revision }) ?? null;
+  const reviewDismissed = candidateReview?.id === dismissedReviewId;
+  const reviewState = reviewDismissed ? null : candidateReview;
   const visibleCharacterCount = reviewState
     ? Array.from(reviewState.text).length
     : characterCount;
@@ -71,8 +78,9 @@ export function ScriptEditor({ storyboard, onSave, review }: ScriptEditorProps) 
     window.sessionStorage.setItem(key, JSON.stringify({
       baseRevision: revision,
       text: draft,
+      reviewId: editingReviewId,
     }));
-  }, [dirty, draft, revision, storyboard.id]);
+  }, [dirty, draft, editingReviewId, revision, storyboard.id]);
 
   const save = useCallback(async () => {
     if (!dirty || phase === "saving" || characterCount > MAX_SCRIPT_CHARS) return;
@@ -84,12 +92,16 @@ export function ScriptEditor({ storyboard, onSave, review }: ScriptEditorProps) 
       setSavedText(saved.text);
       setRevision(saved.revision);
       setUpdatedAt(saved.updatedAt);
+      setIncoming(null);
+      if (editingReviewId) setDismissedReviewId(editingReviewId);
+      setEditingReviewId(null);
       setPhase("idle");
+      onSaved?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "保存失败，请稍后重试。");
       setPhase("error");
     }
-  }, [characterCount, dirty, draft, onSave, phase, revision]);
+  }, [characterCount, dirty, draft, editingReviewId, onSave, onSaved, phase, revision]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -104,15 +116,25 @@ export function ScriptEditor({ storyboard, onSave, review }: ScriptEditorProps) 
   };
 
   return (
-    <form className="script-editor" aria-label="分镜脚本编辑器" onSubmit={submit}>
+    <form className="script-editor" aria-label="片段脚本编辑器" onSubmit={submit}>
       <header className="canvas-header script-editor-header">
-        <h1 className="canvas-title">分镜脚本</h1>
+        <h1 className="canvas-title">片段脚本</h1>
         <div className="script-editor-actions">
           {reviewState ? reviewState.actions : (
-            <button className="script-save-button" type="submit" disabled={!dirty || phase === "saving" || characterCount > MAX_SCRIPT_CHARS}>
-              <Icon name="save" />
-              {phase === "saving" ? "保存中" : "保存"}
-            </button>
+            <>
+              {editingReviewId ? (
+                <button className="script-discard-button" type="button" disabled={phase === "saving"} onClick={() => {
+                  setDraft(savedText);
+                  setEditingReviewId(null);
+                  setError(null);
+                  setPhase("idle");
+                }}>放弃修改</button>
+              ) : null}
+              <button className="script-save-button" type="submit" disabled={!dirty || phase === "saving" || characterCount > MAX_SCRIPT_CHARS}>
+                <Icon name="save" />
+                {phase === "saving" ? "保存中" : "保存"}
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -128,6 +150,7 @@ export function ScriptEditor({ storyboard, onSave, review }: ScriptEditorProps) 
               setRevision(incoming.revision);
               setUpdatedAt(incoming.updatedAt);
               setIncoming(null);
+              setEditingReviewId(null);
               setPhase("idle");
               setError(null);
             }}
@@ -137,38 +160,40 @@ export function ScriptEditor({ storyboard, onSave, review }: ScriptEditorProps) 
         </div>
       ) : null}
 
-      {reviewState ? (
-        <article
-          className="script-editor-body script-editor-preview"
-          aria-label="AI 最新脚本预览"
-          tabIndex={0}
-        >
-          {reviewState.text}
-        </article>
-      ) : (
-        <div className="script-editor-body">
-          <label htmlFor="storyboard-script">脚本内容</label>
-          <textarea
-            id="storyboard-script"
-            value={draft}
-            onChange={(event) => {
-              setDraft(event.target.value);
-              if (phase === "error") {
-                setPhase("idle");
-                setError(null);
-              }
-            }}
-            onKeyDown={handleShortcut}
-            placeholder="输入这个分镜的场景、动作、对白与镜头描述…"
-            spellCheck={false}
-            aria-describedby="script-editor-hint script-editor-feedback"
-          />
+      {reviewDismissed ? (
+        <div className="script-editor-incoming" role="status">
+          <span>人工脚本已保存；原 AI 建议仍可查看或取消。</span>
+          <button type="button" onClick={() => setDismissedReviewId(null)}>查看原建议</button>
         </div>
-      )}
+      ) : null}
+
+      <div className="script-editor-body">
+        <label htmlFor="storyboard-script">脚本内容</label>
+        <textarea
+          id="storyboard-script"
+          value={reviewState?.text ?? draft}
+          onChange={(event) => {
+            if (reviewState) setEditingReviewId(reviewState.id);
+            setDraft(event.target.value);
+            if (phase === "error") {
+              setPhase("idle");
+              setError(null);
+            }
+          }}
+          onKeyDown={handleShortcut}
+          placeholder="输入这个片段的场景、动作、对白与镜头描述…"
+          spellCheck={false}
+          aria-describedby="script-editor-hint script-editor-feedback"
+        />
+      </div>
 
       <footer className="script-editor-footer">
         <div id="script-editor-feedback" className={`script-editor-feedback${error ? " error" : ""}`}>
-          {error ?? `版本 ${revision} · Ctrl / ⌘ + S 快速保存`}
+          {error ?? (editingReviewId
+            ? "已修改 AI 建议 · 保存为人工脚本"
+            : reviewState
+              ? "AI 建议 · 可直接编辑，修改后保存为人工脚本"
+              : `版本 ${revision} · Ctrl / ⌘ + S 快速保存`)}
         </div>
         <div id="script-editor-hint" className={visibleCharacterCount > MAX_SCRIPT_CHARS ? "over-limit" : ""}>
           {visibleCharacterCount.toLocaleString("zh-CN")} / {MAX_SCRIPT_CHARS.toLocaleString("zh-CN")} 字符
@@ -186,12 +211,12 @@ function readDraft(storyboard: StoryboardDetail) {
   try {
     const serialized = window.sessionStorage.getItem(draftStorageKey(storyboard.id));
     if (!serialized) return null;
-    const draft = JSON.parse(serialized) as { baseRevision?: unknown; text?: unknown };
+    const draft = JSON.parse(serialized) as { baseRevision?: unknown; text?: unknown; reviewId?: unknown };
     if (draft.baseRevision !== storyboard.script.revision || typeof draft.text !== "string") {
       window.sessionStorage.removeItem(draftStorageKey(storyboard.id));
       return null;
     }
-    return draft.text;
+    return { text: draft.text, reviewId: typeof draft.reviewId === "string" ? draft.reviewId : null };
   } catch {
     return null;
   }

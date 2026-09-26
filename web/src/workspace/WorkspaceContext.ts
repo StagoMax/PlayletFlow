@@ -1,11 +1,10 @@
 import { createContext, useContext, type Dispatch } from "react";
 import type {
   ApplyProposalResponse,
-  AssetBinding,
-  AssetCopySummary,
   GenerationJob,
   GenerationModel,
   GenerationOptions,
+  MediaItem,
   StoryboardScript,
 } from "../productApi/generated";
 import type {
@@ -22,14 +21,17 @@ export type WorkspaceContextValue = {
   data: WorkspaceSnapshot;
   state: WorkspaceState;
   current: StoryboardWorkspace;
+  objectMedia: Readonly<Record<string, MediaItem>>;
+  publishObjectMedia: (objectId: string, media: MediaItem) => void;
   dispatch: Dispatch<WorkspaceAction>;
-  listAssetBindings: (storyboardId: string, signal: AbortSignal) => Promise<AssetBinding[]>;
   createStoryboard: (input: {
     name: string;
     sourceStoryboardId: string;
-    bindingIds: string[];
-    includePromptOverrides: boolean;
-  }) => Promise<AssetCopySummary>;
+  }) => Promise<void>;
+  duplicateStoryboard: (storyboardId: string) => Promise<void>;
+  renameStoryboard: (name: string) => Promise<void>;
+  deleteStoryboard: () => Promise<void>;
+  reorderStoryboard: (storyboardId: string, targetId: string, placement: "before" | "after") => Promise<void>;
   commitAppliedProposal: (response: ApplyProposalResponse) => void;
   refreshScript: (storyboardId: string, signal?: AbortSignal) => Promise<StoryboardScript | null>;
   saveScript: (storyboardId: string, text: string, expectedRevision: number) => Promise<StoryboardScript>;
@@ -40,6 +42,9 @@ export type WorkspaceContextValue = {
     name: string,
     objectType: WorkspaceObjectType,
   ) => Promise<WorkspaceObjectNode>;
+  renameNode: (nodeId: string, name: string) => Promise<void>;
+  deleteNode: (nodeId: string) => Promise<void>;
+  copyNode: (nodeId: string) => Promise<void>;
   loadGenerationModels: (signal?: AbortSignal) => Promise<GenerationModel[]>;
   generateMedia: (
     storyboardId: string,

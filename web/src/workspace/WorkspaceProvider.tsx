@@ -3,6 +3,7 @@ import type {
   ApplyProposalResponse,
   GenerationJob,
   GenerationOptions,
+  MediaItem,
   StoryboardScript,
 } from "../productApi/generated";
 import type {
@@ -11,8 +12,11 @@ import type {
   WorkspaceObjectNode,
   WorkspaceObjectType,
   WorkspaceSnapshot,
+  WorkspaceTreeNode,
 } from "./types";
-import { appendTreeNode } from "./resourceTree";
+import { appendTreeNode, findTreeNode, mediaBackedObjectIds, nodeContainsSelection } from "./resourceTree";
+import { workspaceObjectMediaClient } from "./workspaceObjectMediaClient";
+import { withStoryboardOrder, withoutStoryboard } from "./storyboardOrder";
 import type { WorkspaceClient } from "./workspaceClient";
 import type { WorkspaceGenerationJob } from "./workspaceClient";
 import { createWorkspaceState, workspaceReducer } from "./workspaceReducer";
@@ -26,6 +30,12 @@ type WorkspaceProviderProps = {
 
 export function WorkspaceProvider({ client, data: initialData, children }: WorkspaceProviderProps) {
   const [data, setData] = useState(initialData);
+  const [objectMedia, setObjectMedia] = useState<Record<string, MediaItem>>({});
+  const publishObjectMedia = useCallback((objectId: string, media: MediaItem) => {
+    setObjectMedia((current) => current[objectId]?.revision > media.revision
+      ? current
+      : { ...current, [objectId]: media });
+  }, []);
   const [state, dispatch] = useReducer(workspaceReducer, data.initialStoryboardId, createWorkspaceState);
   const generationPolls = useRef(new Map<string, AbortController>());
   useEffect(() => () => {
@@ -49,6 +59,13 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
             },
           };
         });
+        for (const objectId of mediaBackedObjectIds(navigationTree)) {
+          void workspaceObjectMediaClient.get(data.project.id, objectId, controller.signal)
+            .then((media) => { if (!controller.signal.aborted) publishObjectMedia(objectId, media); })
+            .catch((error: unknown) => {
+              if (!controller.signal.aborted) console.warn("无法加载对象缩略预览", error);
+            });
+        }
       })
       .catch((error: unknown) => {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
@@ -56,7 +73,7 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
         }
       });
     return () => controller.abort();
-  }, [client, data.project.id, state.currentStoryboardId]);
+  }, [client, data.project.id, publishObjectMedia, state.currentStoryboardId]);
   const refreshScript = useCallback(async (storyboardId: string, signal?: AbortSignal) => {
     const script = await client.loadScript(data.project.id, storyboardId, signal);
     if (!script) return null;
@@ -86,7 +103,7 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
     const controller = new AbortController();
     void refreshScript(state.currentStoryboardId, controller.signal).catch((error: unknown) => {
       if (!(error instanceof DOMException && error.name === "AbortError")) {
-        console.error("无法同步分镜脚本", error);
+        console.error("无法同步片段脚本", error);
       }
     });
     return () => controller.abort();
@@ -151,26 +168,41 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
     addNavigationNode(storyboardId, parentId, node);
     return node;
   }, [addNavigationNode, client, data.project.id]);
-  const listAssetBindings = useCallback(
-    (storyboardId: string, signal: AbortSignal) => client.listAssetBindings(data.project.id, storyboardId, signal),
-    [client, data.project.id],
-  );
+  const updateNavigationTree = useCallback((storyboardId: string, tree: WorkspaceTreeNode[]) => {
+    setData((currentData) => {
+      const workspace = currentData.workspaces[storyboardId];
+      if (!workspace) return currentData;
+      return { ...currentData, workspaces: {
+        ...currentData.workspaces,
+        [storyboardId]: { ...workspace, navigationTree: tree },
+      } };
+    });
+  }, []);
+  const renameNode = useCallback(async (nodeId: string, name: string) => {
+    const tree = await client.renameNode(data.project.id, state.currentStoryboardId, nodeId, name);
+    updateNavigationTree(state.currentStoryboardId, tree);
+  }, [client, data.project.id, state.currentStoryboardId, updateNavigationTree]);
+  const deleteNode = useCallback(async (nodeId: string) => {
+    const node = findTreeNode(data.workspaces[state.currentStoryboardId].navigationTree, nodeId);
+    const tree = await client.deleteNode(data.project.id, state.currentStoryboardId, nodeId);
+    updateNavigationTree(state.currentStoryboardId, tree);
+    if (node && nodeContainsSelection(node, state.selection)) {
+      dispatch({ type: "contentSelected", selection: { kind: "script", storyboardId: state.currentStoryboardId } });
+    }
+  }, [client, data, state, updateNavigationTree]);
+  const copyNode = useCallback(async (nodeId: string) => {
+    const tree = await client.copyNode(data.project.id, state.currentStoryboardId, nodeId);
+    updateNavigationTree(state.currentStoryboardId, tree);
+  }, [client, data.project.id, state.currentStoryboardId, updateNavigationTree]);
   const createStoryboard = useCallback(async (input: {
     name: string;
     sourceStoryboardId: string;
-    bindingIds: string[];
-    includePromptOverrides: boolean;
   }) => {
     const created = await client.createStoryboard(
       data.project.id,
       {
         name: input.name,
         insertAfterId: input.sourceStoryboardId,
-        reuseAssetsFrom: input.bindingIds.length > 0 ? {
-          storyboardId: input.sourceStoryboardId,
-          bindingIds: input.bindingIds,
-          includePromptOverrides: input.includePromptOverrides,
-        } : null,
       },
       crypto.randomUUID(),
     );
@@ -178,20 +210,82 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
       const sourceIndex = currentData.storyboards.findIndex((item) => item.id === input.sourceStoryboardId);
       const storyboards = [...currentData.storyboards];
       storyboards.splice(sourceIndex + 1, 0, created.storyboard);
-      const normalized = storyboards.map((storyboard, index) => ({ ...storyboard, index: index + 1 }));
-      return {
-        ...currentData,
-        storyboards: normalized,
-        workspaces: { ...currentData.workspaces, [created.storyboard.id]: created.workspace },
-      };
+      return withStoryboardOrder(currentData, storyboards, { [created.storyboard.id]: created.workspace });
     });
     dispatch({
       type: "storyboardSelected",
       storyboardId: created.storyboard.id,
       selection: { kind: "script", storyboardId: created.storyboard.id },
     });
-    return created.assetCopy;
   }, [client, data.project.id]);
+  const duplicateStoryboard = useCallback(async (storyboardId: string) => {
+    const created = await client.duplicateStoryboard(data.project.id, storyboardId, crypto.randomUUID());
+    setData((currentData) => {
+      const index = currentData.storyboards.findIndex((item) => item.id === storyboardId);
+      const storyboards = [...currentData.storyboards];
+      storyboards.splice(index + 1, 0, created.storyboard);
+      return withStoryboardOrder(currentData, storyboards, { [created.storyboard.id]: created.workspace });
+    });
+    dispatch({ type: "storyboardSelected", storyboardId: created.storyboard.id });
+  }, [client, data.project.id]);
+  const renameStoryboard = useCallback(async (name: string) => {
+    const storyboardId = state.currentStoryboardId;
+    const source = data.storyboards.find((item) => item.id === storyboardId);
+    if (!source) throw new Error("片段不存在，请刷新后重试。");
+    const updated = await client.renameStoryboard(data.project.id, storyboardId, name, source.revision);
+    setData((currentData) => {
+      const workspace = currentData.workspaces[storyboardId];
+      if (!workspace) return currentData;
+      return {
+        ...currentData,
+        storyboards: currentData.storyboards.map((item) => item.id === storyboardId
+          ? { ...item, name: updated.name, revision: updated.revision, updatedAt: updated.updatedAt }
+          : item),
+        workspaces: { ...currentData.workspaces,
+          [storyboardId]: { ...workspace, storyboard: updated } },
+      };
+    });
+  }, [client, data.project.id, data.storyboards, state.currentStoryboardId]);
+  const deleteStoryboard = useCallback(async () => {
+    const storyboardId = state.currentStoryboardId;
+    const index = data.storyboards.findIndex((item) => item.id === storyboardId);
+    const source = data.storyboards[index];
+    if (!source) throw new Error("片段不存在，请刷新后重试。");
+    let replacement = data.storyboards[index + 1] ?? data.storyboards[index - 1];
+    if (!replacement) {
+      const created = await client.createStoryboard(data.project.id, {
+        name: "新片段",
+        insertAfterId: storyboardId,
+      }, crypto.randomUUID());
+      replacement = created.storyboard;
+      setData((currentData) => withStoryboardOrder(currentData,
+        [...currentData.storyboards, created.storyboard],
+        { [created.storyboard.id]: created.workspace }));
+    }
+    await client.deleteStoryboard(data.project.id, storyboardId, source.revision);
+    dispatch({ type: "storyboardSelected", storyboardId: replacement.id });
+    setData((currentData) => withoutStoryboard(currentData, storyboardId));
+  }, [client, data.project.id, data.storyboards, state.currentStoryboardId]);
+  const reorderStoryboard = useCallback(async (
+    storyboardId: string,
+    targetId: string,
+    placement: "before" | "after",
+  ) => {
+    const source = data.storyboards.find((item) => item.id === storyboardId);
+    if (!source || storyboardId === targetId) return;
+    const updated = await client.reorderStoryboard(data.project.id, storyboardId, {
+      beforeId: placement === "before" ? targetId : null,
+      afterId: placement === "after" ? targetId : null,
+      expectedRevision: source.revision,
+    }, crypto.randomUUID());
+    setData((currentData) => {
+      const storyboards = currentData.storyboards.filter((item) => item.id !== storyboardId);
+      const targetIndex = storyboards.findIndex((item) => item.id === targetId);
+      if (targetIndex < 0) return currentData;
+      storyboards.splice(targetIndex + (placement === "after" ? 1 : 0), 0, updated);
+      return withStoryboardOrder(currentData, storyboards);
+    });
+  }, [client, data.project.id, data.storyboards]);
   const monitorGeneration = useCallback((
     storyboardId: string,
     itemId: string,
@@ -257,17 +351,25 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
     data,
     state,
     current: data.workspaces[state.currentStoryboardId],
+    objectMedia,
+    publishObjectMedia,
     dispatch,
-    listAssetBindings,
     createStoryboard,
+    duplicateStoryboard,
+    renameStoryboard,
+    deleteStoryboard,
+    reorderStoryboard,
     commitAppliedProposal,
     refreshScript,
     saveScript,
     createFolder,
     createObject,
+    renameNode,
+    deleteNode,
+    copyNode,
     loadGenerationModels,
     generateMedia,
-  }), [commitAppliedProposal, createFolder, createObject, createStoryboard, data, generateMedia, listAssetBindings, loadGenerationModels, refreshScript, saveScript, state]);
+  }), [commitAppliedProposal, createFolder, createObject, renameNode, deleteNode, copyNode, createStoryboard, duplicateStoryboard, renameStoryboard, deleteStoryboard, reorderStoryboard, data, generateMedia, loadGenerationModels, objectMedia, publishObjectMedia, refreshScript, saveScript, state]);
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }
 

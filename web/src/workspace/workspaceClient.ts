@@ -1,7 +1,8 @@
 import type {
-  AssetBinding,
   CreateStoryboardRequest,
   CreateStoryboardResponse,
+  StoryboardDetail,
+  ReorderRequest,
   GenerationJob,
   GenerationModel,
   RequestMediaGeneration,
@@ -35,16 +36,23 @@ export type WorkspaceGenerationJob = GenerationJob & {
 export type CreatedWorkspaceStoryboard = CreateStoryboardResponse & {
   workspace: StoryboardWorkspace;
 };
+export type DuplicatedWorkspaceStoryboard = {
+  storyboard: StoryboardDetail;
+  workspace: StoryboardWorkspace;
+};
 
 export interface WorkspaceClient {
   load(signal: AbortSignal): Promise<WorkspaceSnapshot>;
-  listAssetBindings(projectId: string, storyboardId: string, signal: AbortSignal): Promise<AssetBinding[]>;
   createStoryboard(
     projectId: string,
     request: CreateStoryboardRequest,
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<CreatedWorkspaceStoryboard>;
+  duplicateStoryboard(projectId: string, storyboardId: string, idempotencyKey: string, signal?: AbortSignal): Promise<DuplicatedWorkspaceStoryboard>;
+  reorderStoryboard(projectId: string, storyboardId: string, request: ReorderRequest, idempotencyKey: string, signal?: AbortSignal): Promise<StoryboardDetail>;
+  renameStoryboard(projectId: string, storyboardId: string, name: string, expectedRevision: number): Promise<StoryboardDetail>;
+  deleteStoryboard(projectId: string, storyboardId: string, expectedRevision: number): Promise<void>;
   loadNavigationTree(
     projectId: string,
     storyboardId: string,
@@ -77,6 +85,9 @@ export interface WorkspaceClient {
     objectType: WorkspaceObjectType,
     signal?: AbortSignal,
   ): Promise<WorkspaceObjectNode>;
+  renameNode(projectId: string, storyboardId: string, nodeId: string, name: string): Promise<WorkspaceTreeNode[]>;
+  deleteNode(projectId: string, storyboardId: string, nodeId: string): Promise<WorkspaceTreeNode[]>;
+  copyNode(projectId: string, storyboardId: string, nodeId: string): Promise<WorkspaceTreeNode[]>;
   requestMediaGeneration(
     projectId: string,
     storyboardId: string,

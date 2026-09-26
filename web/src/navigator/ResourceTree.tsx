@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent } from "react";
 import { HoverPreview } from "../preview/HoverPreview";
 import { mediaStatusLabel } from "../preview/formatMedia";
 import { MediaThumbnail } from "../preview/MediaThumbnail";
 import { Icon } from "../workspace/Icons";
 import { selectionMatches } from "../workspace/resourceTree";
 import type { NavigatorItem, WorkspaceObjectType, WorkspaceSelection, WorkspaceTreeNode } from "../workspace/types";
+import type { MediaItem } from "../productApi/generated";
 import { PendingUserActionDot } from "./PendingUserActionDot";
 
 export type ResourceCreationIntent =
   | { kind: "folder" }
   | { kind: "object"; objectType: WorkspaceObjectType };
+
+export type ResourceAction = "rename" | "delete" | "copy";
 
 type CreateMenuTarget = {
   folderId: string | null;
@@ -23,6 +26,7 @@ type ResourceTreeProps = {
   rootName: string;
   nodes: WorkspaceTreeNode[];
   items: NavigatorItem[];
+  objectMedia: Readonly<Record<string, MediaItem>>;
   scriptText: string;
   selection: WorkspaceSelection;
   selectedFolderId: string | null;
@@ -30,12 +34,59 @@ type ResourceTreeProps = {
   onSelectFolder: (folderId: string | null) => void;
   onSelectObject: (selection: WorkspaceSelection) => void;
   onCreateRequest: (folderId: string | null, intent: ResourceCreationIntent) => void;
+  onActionRequest: (node: WorkspaceTreeNode, action: ResourceAction) => void;
+  onRootActionRequest: (action: ResourceAction) => void;
 };
 
 export function ResourceTree(props: ResourceTreeProps) {
   const itemsById = useMemo(() => new Map(props.items.map((item) => [item.id, item])), [props.items]);
   const [createTarget, setCreateTarget] = useState<CreateMenuTarget | null>(null);
+  const [contextTarget, setContextTarget] = useState<{ node: WorkspaceTreeNode; root: boolean; trigger: HTMLButtonElement; top: number; left: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const contextRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!contextTarget) return;
+    contextRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus();
+    const close = (event: KeyboardEvent | PointerEvent) => {
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        contextTarget.trigger.focus();
+      } else if (contextRef.current?.contains(event.target as Node)) return;
+      setContextTarget(null);
+    };
+    const closeOnViewportChange = () => setContextTarget(null);
+    window.addEventListener("keydown", close);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("resize", closeOnViewportChange);
+    window.addEventListener("scroll", closeOnViewportChange, true);
+    return () => {
+      window.removeEventListener("keydown", close);
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("resize", closeOnViewportChange);
+      window.removeEventListener("scroll", closeOnViewportChange, true);
+    };
+  }, [contextTarget]);
+
+  const openContextMenu = (node: WorkspaceTreeNode, trigger: HTMLButtonElement, x: number, y: number, root = false) => {
+    setCreateTarget(null);
+    setContextTarget({ node, root, trigger,
+      left: Math.max(8, Math.min(x, window.innerWidth - 172)),
+      top: Math.max(8, Math.min(y, window.innerHeight - 142)),
+    });
+  };
+  const contextMenu = (node: WorkspaceTreeNode, event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    openContextMenu(node, event.currentTarget, event.clientX, event.clientY);
+  };
+  const contextKey = (node: WorkspaceTreeNode, event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    openContextMenu(node, event.currentTarget, rect.left + 24, rect.bottom);
+  };
+  const rootNode: WorkspaceTreeNode = { kind: "folder", id: `storyboard-${props.rootName}`, name: props.rootName, children: [] };
 
   useEffect(() => {
     if (!createTarget) return;
@@ -87,7 +138,14 @@ export function ResourceTree(props: ResourceTreeProps) {
   return (
     <div className="resource-tree-shell">
       <div className={`resource-tree__root${createTarget?.folderId === null ? " menu-open" : ""}`}>
-        <button type="button" className="resource-tree__root-name" onClick={() => props.onSelectFolder(null)}>
+        <button type="button" className="resource-tree__root-name" onClick={() => props.onSelectFolder(null)}
+          onContextMenu={(event) => { event.preventDefault(); openContextMenu(rootNode, event.currentTarget, event.clientX, event.clientY, true); }}
+          onKeyDown={(event) => {
+            if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+            event.preventDefault();
+            const rect = event.currentTarget.getBoundingClientRect();
+            openContextMenu(rootNode, event.currentTarget, rect.left + 24, rect.bottom, true);
+          }}>
           <Icon name="folder" /><span>{props.rootName}</span>
         </button>
         <CreateButton
@@ -96,7 +154,7 @@ export function ResourceTree(props: ResourceTreeProps) {
           onClick={(event) => openCreateMenu(null, props.rootName, event)}
         />
       </div>
-      <ul className="resource-tree" role="tree" aria-label="分镜资源树">
+      <ul className="resource-tree" role="tree" aria-label="片段资源树">
         {props.nodes.map((node) => (
           <ResourceNode
             key={node.id}
@@ -105,6 +163,8 @@ export function ResourceTree(props: ResourceTreeProps) {
             itemsById={itemsById}
             createTargetId={createTarget?.folderId}
             onOpenCreateMenu={openCreateMenu}
+            onOpenContextMenu={contextMenu}
+            onContextKey={contextKey}
             {...props}
           />
         ))}
@@ -133,8 +193,32 @@ export function ResourceTree(props: ResourceTreeProps) {
           </button>
         </div>
       ) : null}
+      {contextTarget ? (
+        <div ref={contextRef} className="resource-create__menu resource-context__menu" role="menu"
+          aria-label={`${contextTarget.node.name}操作`}
+          style={{ top: contextTarget.top, left: contextTarget.left }}>
+          {(contextTarget.root || !containsScript(contextTarget.node)
+            ? ["rename", "copy", "delete"] as const
+            : ["rename"] as const).map((action) => (
+            <button key={action} type="button" role="menuitem"
+              onClick={() => {
+                if (contextTarget.root) props.onRootActionRequest(action);
+                else props.onActionRequest(contextTarget.node, action);
+                setContextTarget(null);
+              }}>
+              {action === "rename" ? "重命名" : action === "copy" ? "复制" : "删除"}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function containsScript(node: WorkspaceTreeNode): boolean {
+  return node.kind === "folder"
+    ? node.children.some(containsScript)
+    : node.selection.kind === "script";
 }
 
 function CreateButton({
@@ -166,6 +250,8 @@ function ResourceNode({
   itemsById,
   createTargetId,
   onOpenCreateMenu,
+  onOpenContextMenu,
+  onContextKey,
   ...props
 }: ResourceTreeProps & {
   node: WorkspaceTreeNode;
@@ -173,6 +259,8 @@ function ResourceNode({
   itemsById: Map<string, NavigatorItem>;
   createTargetId: string | null | undefined;
   onOpenCreateMenu: (folderId: string | null, folderName: string, event: MouseEvent<HTMLButtonElement>) => void;
+  onOpenContextMenu: (node: WorkspaceTreeNode, event: MouseEvent<HTMLButtonElement>) => void;
+  onContextKey: (node: WorkspaceTreeNode, event: ReactKeyboardEvent<HTMLButtonElement>) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const style = { "--tree-depth": depth } as CSSProperties;
@@ -188,7 +276,8 @@ function ResourceNode({
           >
             <Icon name="chevron-right" className={expanded ? "expanded" : ""} />
           </button>
-          <button type="button" className="resource-tree__folder-name" onClick={() => props.onSelectFolder(node.id)}>
+          <button type="button" className="resource-tree__folder-name" onClick={() => props.onSelectFolder(node.id)}
+            onContextMenu={(event) => onOpenContextMenu(node, event)} onKeyDown={(event) => onContextKey(node, event)}>
             <Icon name="folder" />
             <span>{node.name}</span>
           </button>
@@ -208,6 +297,8 @@ function ResourceNode({
                 itemsById={itemsById}
                 createTargetId={createTargetId}
                 onOpenCreateMenu={onOpenCreateMenu}
+                onOpenContextMenu={onOpenContextMenu}
+                onContextKey={onContextKey}
                 {...props}
               />
             ))}
@@ -217,8 +308,14 @@ function ResourceNode({
     );
   }
 
-  const selected = selectionMatches(node.selection, props.selection);
-  const item = node.selection.kind === "item" ? itemsById.get(node.selection.itemId) : null;
+  const selected = props.selection.nodeId
+    ? props.selection.nodeId === node.id
+    : selectionMatches(node.selection, props.selection);
+  const savedMedia = node.selection.kind === "emptyObject" ? props.objectMedia[node.id] : null;
+  const objectItem: NavigatorItem | null = savedMedia && savedMedia.status !== "placeholder"
+    ? { id: node.id, name: node.name, description: "", label: "", accent: "#aeb7ff", media: savedMedia }
+    : null;
+  const item = node.selection.kind === "item" ? itemsById.get(node.selection.itemId) : objectItem;
   const pendingTarget = node.selection.kind === "script"
     ? `script:${node.selection.storyboardId}`
     : item
@@ -230,9 +327,11 @@ function ResourceNode({
       type="button"
       className={`resource-tree__object${selected ? " selected" : ""}${node.selection.kind === "script" ? " script-card" : ""}`}
       style={style}
-      aria-label={`${item ? `${item.name}，${mediaStatusLabel(item.media.status)}` : node.name}${pendingUserAction ? "，等待用户处理" : ""}`}
+      aria-label={`${node.selection.kind === "emptyObject" ? node.name : item ? `${item.name}，${mediaStatusLabel(item.media.status)}` : node.name}${pendingUserAction ? "，等待用户处理" : ""}`}
       aria-pressed={selected}
-      onClick={() => props.onSelectObject(node.selection)}
+      onClick={() => props.onSelectObject({ ...node.selection, nodeId: node.id })}
+      onContextMenu={(event) => onOpenContextMenu(node, event)}
+      onKeyDown={(event) => onContextKey(node, event)}
     >
       <span className="resource-tree__object-icon">
         {item ? <MediaThumbnail item={item} /> : node.objectType === "text" ? <Icon name="file-text" /> : node.objectType === "image" ? <Icon name="image" /> : <Icon name="film" />}
@@ -244,5 +343,5 @@ function ResourceNode({
     </button>
   );
 
-  return <li role="treeitem">{item ? <HoverPreview item={item}>{row}</HoverPreview> : row}</li>;
+  return <li role="treeitem">{item ? <HoverPreview item={item} disabled={selected}>{row}</HoverPreview> : row}</li>;
 }

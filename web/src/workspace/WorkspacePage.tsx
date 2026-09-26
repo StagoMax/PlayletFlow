@@ -24,6 +24,7 @@ export type WorkspaceAssistantScope = {
   storyboardName: string;
   assets: readonly ComposerAssetReference[];
   onTurnSettled: () => void;
+  onSelectReference: (reference: ComposerAssetReference) => void;
 };
 
 function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: ComponentType<WorkspaceAssistantScope> }) {
@@ -32,8 +33,9 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
     state,
     current,
     dispatch,
-    listAssetBindings,
     createStoryboard,
+    duplicateStoryboard,
+    reorderStoryboard,
     commitAppliedProposal,
     refreshScript,
   } = useWorkspace();
@@ -43,7 +45,12 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
     current.storyboard.id,
   );
   const pendingUserActionTargets = useMemo(() => new Set(byTarget.keys()), [byTarget]);
+  const composerAssets = useMemo(() => workspaceComposerAssets(current), [current]);
   const scriptProposals = byTarget.get(`script:${current.storyboard.id}`) ?? [];
+  const mediaProposals = useMemo(
+    () => [...byTarget.values()].flat().filter((proposal) => proposal.target.type !== "script"),
+    [byTarget],
+  );
   const handleTurnSettled = useCallback(() => {
     refreshProposals();
     void refreshScript(current.storyboard.id);
@@ -51,6 +58,10 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
   const handleProposalApplied = useCallback((response: Parameters<typeof commitAppliedProposal>[0]) => {
     commitAppliedProposal(response);
   }, [commitAppliedProposal]);
+  const handleSelectReference = useCallback((reference: ComposerAssetReference) => {
+    if (reference.kind !== "text") return;
+    dispatch({ type: "contentSelected", selection: reference.selection });
+  }, [dispatch]);
   return (
     <div className="workspace-shell">
       <a className="skip-link" href="#workspace-main">跳到预览区</a>
@@ -74,8 +85,9 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
                   : { kind: "script", storyboardId },
               });
             }}
-            loadAssetBindings={listAssetBindings}
-            onCreate={(sourceStoryboardId, input) => createStoryboard({ sourceStoryboardId, ...input })}
+            onCreate={(sourceStoryboardId, name) => createStoryboard({ sourceStoryboardId, name })}
+            onDuplicate={duplicateStoryboard}
+            onReorder={reorderStoryboard}
           />
         </header>
         <ContentNavigator pendingUserActionTargets={pendingUserActionTargets} />
@@ -83,16 +95,19 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
       <WorkspaceCanvas
         proposalClient={proposalClient}
         scriptProposals={scriptProposals}
+        mediaProposals={mediaProposals}
         onProposalChange={updateProposal}
         onProposalApplied={handleProposalApplied}
+        onScriptSaved={refreshProposals}
       />
       <aside className="workspace-assistant" aria-label="AI 对话区">
         <AssistantPanel
           projectId={data.project.id}
           storyboardId={state.currentStoryboardId}
           storyboardName={current.storyboard.name}
-          assets={workspaceComposerAssets(current)}
+          assets={composerAssets}
           onTurnSettled={handleTurnSettled}
+          onSelectReference={handleSelectReference}
         />
       </aside>
     </div>
@@ -103,7 +118,10 @@ export function WorkspacePage({ client, assistantPanel }: WorkspacePageProps) {
   const { resource, retry } = useWorkspaceQueries(client);
   if (resource.status === "loading") return <WorkspaceLoading />;
   if (resource.status === "error") return <WorkspaceError message={resource.message} onRetry={retry} />;
-  if (resource.status === "empty") return <WorkspaceEmpty projectName={resource.projectName} />;
+  if (resource.status === "empty") return <WorkspaceEmpty projectName={resource.data.project.name} onCreate={async (name) => {
+    await client.createStoryboard(resource.data.project.id, { name, insertAfterId: null }, crypto.randomUUID());
+    retry();
+  }} />;
   return (
     <WorkspaceProvider client={client} data={resource.data}>
       <WorkspaceLayout assistantPanel={assistantPanel} />
