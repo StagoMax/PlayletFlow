@@ -29,10 +29,10 @@ if (!providerId) {
       const args = windows
         ? [
             "/d", "/s", "/c",
-            "vercel.cmd env update OPENTOPIA_API_KEY production --type secret --yes",
+            "vercel.cmd env update PLAYLETFLOW_LLM_API_KEY production --type secret --yes",
           ]
         : [
-            "env", "update", "OPENTOPIA_API_KEY", "production",
+            "env", "update", "PLAYLETFLOW_LLM_API_KEY", "production",
             "--type", "secret", "--yes",
           ];
       const child = spawn(command, args, {

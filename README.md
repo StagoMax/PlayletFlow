@@ -114,7 +114,7 @@ Windows PowerShell：
 
 ```powershell
 cd server
-$env:OPENTOPIA_API_KEY = "your-deepseek-api-key"
+$env:PLAYLETFLOW_LLM_API_KEY = Read-Host -MaskInput "DeepSeek API Key"
 cargo run
 ```
 
@@ -122,11 +122,12 @@ macOS / Linux：
 
 ```bash
 cd server
-export OPENTOPIA_API_KEY="your-deepseek-api-key"
+read -rsp "DeepSeek API Key: " PLAYLETFLOW_LLM_API_KEY
+export PLAYLETFLOW_LLM_API_KEY
 cargo run
 ```
 
-可以通过 `OPENTOPIA_OPENAI_BASE_URL` 和 `OPENTOPIA_MODEL` 覆盖默认端点及模型。
+可以通过 `PLAYLETFLOW_LLM_BASE_URL` 和 `PLAYLETFLOW_LLM_MODEL` 覆盖默认端点及模型。
 完整配置项见 [.env.example](.env.example)。不要把服务端密钥放进 `VITE_` 变量或提交到 Git。
 
 ### 启用图片与视频生成
@@ -253,7 +254,7 @@ vercel link
 vercel deploy --prod
 ```
 
-至少需要在 Vercel 服务端环境中配置 `OPENTOPIA_API_KEY` 和 `PORT=3000`。
+至少需要在 Vercel 服务端环境中配置 `PLAYLETFLOW_LLM_API_KEY` 和 `PORT=3000`。
 如需云端媒体生成，再配置 `.env.example` 中的 `ARK_API_KEY` 与 `TOS_*` 变量。
 部署后先检查 `/health`，再验证一轮模型对话和 `runtime_probe` 工具调用。
 
