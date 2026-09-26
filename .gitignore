@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+.videoflow/
+.local/
+server/target/
+web/node_modules/
+web/dist/
+*.log

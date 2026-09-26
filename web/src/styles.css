@@ -1,0 +1,55 @@
+:root { font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif; color: #e8edf5; background: #0e1118; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, textarea { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+.app-shell { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100vh; }
+.sidebar { display: flex; flex-direction: column; gap: 18px; padding: 20px 14px; border-right: 1px solid #252d3b; background: #151a23; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 8px; font-weight: 700; letter-spacing: .02em; }
+.brand-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: #111827; background: #a9f0d1; }
+.new-thread { border: 1px solid #3c485c; border-radius: 10px; background: #242d3b; color: #e8edf5; padding: 10px 12px; text-align: left; }
+.new-thread:hover, .thread-row:hover { background: #2f3a4b; }
+.thread-list { display: flex; flex-direction: column; gap: 5px; overflow-y: auto; }
+.thread-row { width: 100%; padding: 10px 12px; text-align: left; color: #b7c1d0; border: 0; border-radius: 9px; background: transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-row.selected { background: #304539; color: #d9ffeb; }
+.sidebar-note { margin-top: auto; color: #8b98ac; font-size: 12px; line-height: 1.55; }
+.main-panel { display: flex; flex-direction: column; min-width: 0; }
+.conversation { display: flex; flex: 1; flex-direction: column; min-height: 100vh; }
+.conversation-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 28px; border-bottom: 1px solid #252d3b; }
+.conversation-header div { display: flex; flex-direction: column; gap: 4px; }
+.conversation-header small { color: #8b98ac; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: #a9f0d1; box-shadow: 0 0 12px #a9f0d1; }
+.conversation-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+.conversation-content { max-width: 860px; margin: auto; padding: 30px 24px 60px; }
+.center-note, .empty-state { color: #8b98ac; text-align: center; padding: 80px 20px; }
+.empty-state h2 { color: #e8edf5; font-size: 24px; font-weight: 600; }
+.older-button { display: block; margin: 0 auto 28px; color: #a9f0d1; background: none; border: 0; }
+.message { display: flex; flex-direction: column; gap: 9px; max-width: 90%; margin: 0 0 25px; }
+.message.user { align-items: flex-end; margin-left: auto; }
+.message-label { color: #8390a5; font-size: 12px; }
+.message-body { line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.message.user .message-body { background: #263144; padding: 11px 15px; border-radius: 15px 15px 4px 15px; }
+.message.assistant .message-body { width: 100%; }
+.message-body p { margin: 0 0 11px; }
+.message-body pre { overflow-x: auto; padding: 14px; background: #171e29; border-radius: 9px; }
+.message-body code { font-family: Consolas, monospace; font-size: .9em; }
+.message-body a { color: #a9f0d1; }
+.turn-activity { margin: -10px 0 24px; }
+.working, .live-text { color: #aab7c8; padding: 8px 0; font-size: 14px; }
+.live-text { white-space: pre-wrap; line-height: 1.6; }
+.cursor { color: #a9f0d1; }
+.tool-card { margin: 9px 0; padding: 12px 14px; border: 1px solid #354154; border-radius: 10px; background: #1b2430; font-size: 13px; }
+.tool-head { display: flex; justify-content: space-between; gap: 12px; color: #b8f2d5; font-weight: 600; }
+.tool-head small { color: #8b98ac; }
+.tool-card pre { max-height: 120px; overflow: auto; color: #aeb9c9; margin: 9px 0; }
+.tool-output { white-space: pre-wrap; overflow-wrap: anywhere; color: #d6e0ef; border-top: 1px solid #354154; padding-top: 9px; }
+.tool-card button { margin-top: 9px; border: 0; background: transparent; color: #a9f0d1; padding: 0; }
+.turn-error, .conversation-error, .global-error { color: #ffc1b9; background: #42262a; padding: 10px 14px; border-radius: 8px; font-size: 13px; }
+.conversation-error { margin: 0 24px 10px; }
+.global-error { margin: 16px; }
+.composer { display: flex; align-items: flex-end; gap: 12px; max-width: 860px; width: calc(100% - 48px); margin: 0 auto 22px; padding: 10px; border: 1px solid #3a4657; border-radius: 14px; background: #1b2430; }
+.composer:focus-within { border-color: #78cba8; }
+.composer textarea { flex: 1; min-height: 50px; max-height: 180px; resize: vertical; border: 0; outline: none; color: #e8edf5; background: transparent; padding: 8px; }
+.composer button { border: 0; border-radius: 9px; padding: 9px 18px; background: #a9f0d1; color: #122019; font-weight: 700; }
+@media (max-width: 700px) { .app-shell { grid-template-columns: 1fr; } .sidebar { display: none; } .conversation-content { padding: 20px 15px 40px; } .composer { width: calc(100% - 24px); } }
