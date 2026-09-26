@@ -4,7 +4,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use opentopia_core::model::{AgentEvent, AgentEventPayload, Message, MessageRole};
-use opentopia_core::provider::ModelProvider;
+use opentopia_core::provider::{MockProvider, ModelProvider};
 use opentopia_core::tools::ToolRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -14,7 +14,8 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct CloudState {
-    pub provider: Arc<dyn ModelProvider>,
+    pub provider: Arc<tokio::sync::OnceCell<Arc<dyn ModelProvider>>>,
+    pub fixture: bool,
     pub tools: ToolRegistry,
     pub workspace: PathBuf,
     pub rate_limit: Arc<RateLimiter>,
@@ -61,6 +62,21 @@ async fn turn(
         return Err(error(StatusCode::TOO_MANY_REQUESTS, "too many requests; please retry in one minute"));
     }
     validate(&request).map_err(|reason| error(StatusCode::BAD_REQUEST, reason))?;
+    let provider = state
+        .provider
+        .get_or_try_init(|| async {
+            if state.fixture {
+                Ok(Arc::new(MockProvider) as Arc<dyn ModelProvider>)
+            } else {
+                runtime::configured_provider().await
+            }
+        })
+        .await
+        .map_err(|cause| {
+            eprintln!("cloud provider initialization failed: {cause:#}");
+            error(StatusCode::BAD_GATEWAY, "model provider is unavailable")
+        })?
+        .clone();
     let user = request.message;
     let content = user
         .parts
@@ -74,7 +90,7 @@ async fn turn(
     let turn_id = Uuid::new_v4();
     let history = history::project_history(&request.messages, &request.events);
     let result = runtime::run_once(
-        state.provider,
+        provider,
         state.tools,
         state.workspace,
         request.thread_id,

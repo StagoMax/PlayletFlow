@@ -18,15 +18,11 @@ async fn main() -> Result<()> {
     if args.iter().any(|arg| arg == "--smoke") {
         return smoke().await;
     }
-    let provider: Arc<dyn ModelProvider> = if args.iter().any(|arg| arg == "--fixture") {
-        println!("Using the local fixture provider; responses are not from a remote model");
-        Arc::new(MockProvider)
-    } else {
-        runtime::configured_provider().await?
-    };
+    let fixture = args.iter().any(|arg| arg == "--fixture");
     if std::env::var("VIDEOFLOW_CLOUD").as_deref() == Ok("1") {
         let state = cloud::CloudState {
-            provider,
+            provider: Arc::new(tokio::sync::OnceCell::new()),
+            fixture,
             tools: runtime::default_registry(),
             workspace: std::env::current_dir()?,
             rate_limit: Arc::new(rate_limit::RateLimiter::default()),
@@ -36,6 +32,12 @@ async fn main() -> Result<()> {
         println!("Videoflow cloud API listening on port {port}");
         axum::serve(listener, cloud::router(state)).await?;
     } else {
+        let provider: Arc<dyn ModelProvider> = if fixture {
+            println!("Using the local fixture provider; responses are not from a remote model");
+            Arc::new(MockProvider)
+        } else {
+            runtime::configured_provider().await?
+        };
         let database = std::env::var("VIDEOFLOW_DB")
             .unwrap_or_else(|_| ".videoflow/conversations.sqlite".to_owned());
         let store = Arc::new(SqliteSessionStore::open(database)?);

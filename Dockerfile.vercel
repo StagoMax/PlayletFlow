@@ -1,6 +1,8 @@
 FROM rust:1.97-bookworm AS builder
 WORKDIR /app
 COPY server/Cargo.toml server/Cargo.lock server/
+RUN mkdir -p server/src && printf 'fn main() {}\n' > server/src/main.rs \
+    && cargo build --manifest-path server/Cargo.toml --release --locked
 COPY server/src server/src
 RUN cargo build --manifest-path server/Cargo.toml --release --locked
 
