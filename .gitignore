@@ -8,8 +8,10 @@ web/node_modules/
 web/dist/
 web/.e2e/
 web/test-results/
+/.e2e/
 *.log
 /ApiKey*.txt
+/deepseekAPI.txt
 /用户信息.csv
 
 .vercel

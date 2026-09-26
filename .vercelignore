@@ -11,4 +11,5 @@ web/test-results/
 web/playwright-report/
 *.log
 /ApiKey*.txt
+/deepseekAPI.txt
 /用户信息.csv
