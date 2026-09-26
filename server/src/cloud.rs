@@ -51,6 +51,7 @@ async fn turn(
     headers: HeaderMap,
     Json(request): Json<TurnRequest>,
 ) -> Result<Json<TurnResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let started = std::time::Instant::now();
     let client = headers
         .get("x-vercel-forwarded-for")
         .or_else(|| headers.get("x-forwarded-for"))
@@ -62,6 +63,7 @@ async fn turn(
         return Err(error(StatusCode::TOO_MANY_REQUESTS, "too many requests; please retry in one minute"));
     }
     validate(&request).map_err(|reason| error(StatusCode::BAD_REQUEST, reason))?;
+    eprintln!("cloud turn accepted");
     let provider = state
         .provider
         .get_or_try_init(|| async {
@@ -77,6 +79,7 @@ async fn turn(
             error(StatusCode::BAD_GATEWAY, "model provider is unavailable")
         })?
         .clone();
+    eprintln!("cloud provider ready after {}ms", started.elapsed().as_millis());
     let user = request.message;
     let content = user
         .parts
@@ -105,6 +108,7 @@ async fn turn(
         eprintln!("cloud turn failed: {cause:#}");
         error(StatusCode::BAD_GATEWAY, "model request failed")
     })?;
+    eprintln!("cloud turn completed after {}ms", started.elapsed().as_millis());
     let next_seq = request.events.last().map_or(0, |event| event.seq) + 1;
     let events = result
         .events
