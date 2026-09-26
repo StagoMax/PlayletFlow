@@ -1,4 +1,4 @@
-use crate::conversation::ConversationService;
+use crate::{conversation::ConversationService, runtime};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderName, Method, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -26,6 +26,10 @@ pub fn router(service: ConversationService) -> Router {
         )
         .route("/api/threads/:thread_id/events", get(list_events))
         .route("/api/threads/:thread_id/events/stream", get(stream_events))
+        .route(
+            "/api/threads/:thread_id/turn/cancel",
+            axum::routing::post(cancel_turn),
+        )
         .route(
             "/api/threads/:thread_id/events/:event_id/tool-result",
             get(tool_result_detail),
@@ -71,7 +75,11 @@ fn require_thread(service: &ConversationService, id: Uuid) -> ApiResult<()> {
 }
 
 async fn health() -> Json<serde_json::Value> {
-    Json(json!({ "status": "ok", "runtime": "opentopia-agent-core" }))
+    Json(json!({
+        "status": "ok",
+        "runtime": "opentopia-agent-core",
+        "model": runtime::configured_model_id().ok(),
+    }))
 }
 
 async fn list_threads(State(service): State<ConversationService>) -> ApiResult<Json<Vec<Thread>>> {
@@ -172,6 +180,25 @@ async fn send_message(
         StatusCode::ACCEPTED,
         Json(SendMessageResponse { message, turn_id }),
     ))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CancelTurnRequest {
+    turn_id: Option<Uuid>,
+}
+
+async fn cancel_turn(
+    State(service): State<ConversationService>,
+    Path(thread_id): Path<Uuid>,
+    Json(request): Json<CancelTurnRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    require_thread(&service, thread_id)?;
+    let cancelled = service
+        .cancel_turn(thread_id, request.turn_id)
+        .await
+        .map_err(internal)?;
+    Ok(Json(json!({ "cancelled": cancelled })))
 }
 
 #[derive(Deserialize)]

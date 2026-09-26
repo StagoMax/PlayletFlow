@@ -2,20 +2,28 @@
 name = "videoflow-runtime-server"
 version = "0.1.0"
 edition = "2021"
+default-run = "videoflow-runtime-server"
 
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
 async-stream = "0.3"
 axum = { version = "0.7", features = ["macros"] }
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 futures-util = "0.3"
 opentopia-core = { git = "https://github.com/StagoMax/OpenTopia.git", rev = "7693165bde8773f2113a62d2af0d3a1f44685f7c" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rusqlite = "0.32"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-tower-http = { version = "0.6", features = ["cors"] }
-uuid = { version = "1", features = ["v4", "serde"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+ve-tos-rust-sdk = { version = "2.9.20", default-features = false, features = ["asynchronous", "tokio-runtime", "use-rustls"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

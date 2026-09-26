@@ -24,9 +24,15 @@ impl RateLimiter {
         let instance = counts.instance.get_or_insert((now, 0));
         if now.duration_since(instance.0) >= WINDOW {
             *instance = (now, 0);
-            counts.clients.retain(|_, (start, _)| now.duration_since(*start) < WINDOW);
+            counts
+                .clients
+                .retain(|_, (start, _)| now.duration_since(*start) < WINDOW);
         }
-        if counts.instance.as_ref().is_some_and(|(_, count)| *count >= INSTANCE_LIMIT) {
+        if counts
+            .instance
+            .as_ref()
+            .is_some_and(|(_, count)| *count >= INSTANCE_LIMIT)
+        {
             return false;
         }
         let client_count = counts.clients.entry(client.to_owned()).or_insert((now, 0));
