@@ -56,9 +56,9 @@ export const cloudApi = {
   },
   turn: async (threadId: string, message: Message): Promise<AgentEvent[]> => {
     const prior = conversation(threadId);
-    const response = await fetch("/api/turn/stream", {
+    const response = await fetch("/api/turn", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
       body: JSON.stringify({
         threadId,
         message,

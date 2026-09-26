@@ -2,7 +2,7 @@ use crate::{history, rate_limit::RateLimiter, runtime};
 use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use opentopia_core::model::{AgentEvent, AgentEventPayload, Message, MessageRole};
@@ -32,7 +32,6 @@ pub fn router(state: CloudState) -> Router {
             get(|| async { Json(json!({"status": "ok", "runtime": "opentopia-agent-core"})) }),
         )
         .route("/api/turn", post(turn))
-        .route("/api/turn/stream", post(turn_stream))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state)
 }
@@ -58,17 +57,21 @@ async fn turn(
     State(state): State<CloudState>,
     headers: HeaderMap,
     Json(request): Json<TurnRequest>,
-) -> Result<Json<TurnResponse>, (StatusCode, Json<serde_json::Value>)> {
-    accept(&state, &headers, &request)?;
-    execute_turn(state, request).await.map(Json)
-}
-
-async fn turn_stream(
-    State(state): State<CloudState>,
-    headers: HeaderMap,
-    Json(request): Json<TurnRequest>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     accept(&state, &headers, &request)?;
+    let wants_stream = headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.contains("text/event-stream"));
+    if wants_stream {
+        return Ok(stream_response(state, request));
+    }
+    execute_turn(state, request)
+        .await
+        .map(|response| Json(response).into_response())
+}
+
+fn stream_response(state: CloudState, request: TurnRequest) -> Response {
     let stream = async_stream::stream! {
         yield Ok::<Bytes, Infallible>(Bytes::from_static(b"event: started\ndata: {}\n\n"));
         let work = execute_turn(state, request);
@@ -91,11 +94,11 @@ async fn turn_stream(
             }
         }
     };
-    Ok(Response::builder()
+    Response::builder()
         .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
         .header(header::CACHE_CONTROL, "no-cache, no-transform")
         .body(Body::from_stream(stream))
-        .expect("stream response headers are valid"))
+        .expect("stream response headers are valid")
 }
 
 fn accept(
