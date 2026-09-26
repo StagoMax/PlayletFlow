@@ -1,6 +1,8 @@
 use crate::{history, rate_limit::RateLimiter, runtime};
+use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use opentopia_core::model::{AgentEvent, AgentEventPayload, Message, MessageRole};
@@ -8,8 +10,10 @@ use opentopia_core::provider::{MockProvider, ModelProvider};
 use opentopia_core::tools::ToolRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -23,8 +27,12 @@ pub struct CloudState {
 
 pub fn router(state: CloudState) -> Router {
     Router::new()
-        .route("/health", get(|| async { Json(json!({"status": "ok", "runtime": "opentopia-agent-core"})) }))
+        .route(
+            "/health",
+            get(|| async { Json(json!({"status": "ok", "runtime": "opentopia-agent-core"})) }),
+        )
         .route("/api/turn", post(turn))
+        .route("/api/turn/stream", post(turn_stream))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state)
 }
@@ -51,7 +59,50 @@ async fn turn(
     headers: HeaderMap,
     Json(request): Json<TurnRequest>,
 ) -> Result<Json<TurnResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let started = std::time::Instant::now();
+    accept(&state, &headers, &request)?;
+    execute_turn(state, request).await.map(Json)
+}
+
+async fn turn_stream(
+    State(state): State<CloudState>,
+    headers: HeaderMap,
+    Json(request): Json<TurnRequest>,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    accept(&state, &headers, &request)?;
+    let stream = async_stream::stream! {
+        yield Ok::<Bytes, Infallible>(Bytes::from_static(b"event: started\ndata: {}\n\n"));
+        let work = execute_turn(state, request);
+        tokio::pin!(work);
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(3));
+        heartbeat.tick().await;
+        loop {
+            tokio::select! {
+                result = &mut work => {
+                    let frame = match result {
+                        Ok(response) => format!("event: result\ndata: {}\n\n", serde_json::to_string(&response).expect("turn response serializes")),
+                        Err((_, Json(body))) => format!("event: error\ndata: {}\n\n", body),
+                    };
+                    yield Ok(Bytes::from(frame));
+                    break;
+                }
+                _ = heartbeat.tick() => {
+                    yield Ok(Bytes::from_static(b": ping\n\n"));
+                }
+            }
+        }
+    };
+    Ok(Response::builder()
+        .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-cache, no-transform")
+        .body(Body::from_stream(stream))
+        .expect("stream response headers are valid"))
+}
+
+fn accept(
+    state: &CloudState,
+    headers: &HeaderMap,
+    request: &TurnRequest,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     let client = headers
         .get("x-vercel-forwarded-for")
         .or_else(|| headers.get("x-forwarded-for"))
@@ -60,9 +111,19 @@ async fn turn(
         .unwrap_or("unknown")
         .trim();
     if !state.rate_limit.check(client) {
-        return Err(error(StatusCode::TOO_MANY_REQUESTS, "too many requests; please retry in one minute"));
+        return Err(error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many requests; please retry in one minute",
+        ));
     }
-    validate(&request).map_err(|reason| error(StatusCode::BAD_REQUEST, reason))?;
+    validate(request).map_err(|reason| error(StatusCode::BAD_REQUEST, reason))
+}
+
+async fn execute_turn(
+    state: CloudState,
+    request: TurnRequest,
+) -> Result<TurnResponse, (StatusCode, Json<serde_json::Value>)> {
+    let started = std::time::Instant::now();
     eprintln!("cloud turn accepted");
     let provider = state
         .provider
@@ -70,7 +131,7 @@ async fn turn(
             if state.fixture {
                 Ok(Arc::new(MockProvider) as Arc<dyn ModelProvider>)
             } else {
-                runtime::configured_provider().await
+                runtime::configured_cloud_provider()
             }
         })
         .await
@@ -79,7 +140,10 @@ async fn turn(
             error(StatusCode::BAD_GATEWAY, "model provider is unavailable")
         })?
         .clone();
-    eprintln!("cloud provider ready after {}ms", started.elapsed().as_millis());
+    eprintln!(
+        "cloud provider ready after {}ms",
+        started.elapsed().as_millis()
+    );
     let user = request.message;
     let content = user
         .parts
@@ -108,7 +172,10 @@ async fn turn(
         eprintln!("cloud turn failed: {cause:#}");
         error(StatusCode::BAD_GATEWAY, "model request failed")
     })?;
-    eprintln!("cloud turn completed after {}ms", started.elapsed().as_millis());
+    eprintln!(
+        "cloud turn completed after {}ms",
+        started.elapsed().as_millis()
+    );
     let next_seq = request.events.last().map_or(0, |event| event.seq) + 1;
     let events = result
         .events
@@ -116,17 +183,32 @@ async fn turn(
         .filter(visible_payload)
         .enumerate()
         .map(|(offset, payload)| {
-            AgentEvent::new(request.thread_id, Some(turn_id), next_seq + offset as i64, payload)
+            AgentEvent::new(
+                request.thread_id,
+                Some(turn_id),
+                next_seq + offset as i64,
+                payload,
+            )
         })
         .collect();
-    Ok(Json(TurnResponse { message: user, turn_id, events }))
+    Ok(TurnResponse {
+        message: user,
+        turn_id,
+        events,
+    })
 }
 
 fn validate(request: &TurnRequest) -> Result<(), &'static str> {
-    let content = request.message.parts.iter().filter_map(|part| match part {
-        opentopia_core::model::MessagePart::Text { text } => Some(text.as_str()),
-        _ => None,
-    }).collect::<Vec<_>>().join("\n");
+    let content = request
+        .message
+        .parts
+        .iter()
+        .filter_map(|part| match part {
+            opentopia_core::model::MessagePart::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     if content.trim().is_empty() || content.chars().count() > 2_000 {
         return Err("message must contain 1 to 2000 characters");
     }
@@ -139,7 +221,10 @@ fn validate(request: &TurnRequest) -> Result<(), &'static str> {
     if request.messages.iter().any(|message| {
         message.thread_id != request.thread_id
             || !matches!(message.role, MessageRole::User | MessageRole::Assistant)
-    }) || request.events.iter().any(|event| event.thread_id != request.thread_id)
+    }) || request
+        .events
+        .iter()
+        .any(|event| event.thread_id != request.thread_id)
     {
         return Err("invalid conversation history");
     }

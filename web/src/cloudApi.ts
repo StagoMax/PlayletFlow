@@ -56,7 +56,7 @@ export const cloudApi = {
   },
   turn: async (threadId: string, message: Message): Promise<AgentEvent[]> => {
     const prior = conversation(threadId);
-    const response = await fetch("/api/turn", {
+    const response = await fetch("/api/turn/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -70,7 +70,28 @@ export const cloudApi = {
       const body = await response.json().catch(() => ({})) as { error?: string };
       throw new Error(body.error || `${response.status} ${response.statusText}`);
     }
-    const result = await response.json() as { message: Message; events: AgentEvent[] };
+    if (!response.body) throw new Error("浏览器无法读取对话流");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    let result: { message: Message; events: AgentEvent[] } | undefined;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      for (let end = pending.indexOf("\n\n"); end !== -1; end = pending.indexOf("\n\n")) {
+        const frame = pending.slice(0, end);
+        pending = pending.slice(end + 2);
+        const kind = frame.match(/^event: (.+)$/m)?.[1];
+        const data = frame.match(/^data: (.+)$/m)?.[1];
+        if (kind === "error") {
+          const body = data ? JSON.parse(data) as { error?: string } : {};
+          throw new Error(body.error || "模型请求失败");
+        }
+        if (kind === "result" && data) result = JSON.parse(data) as { message: Message; events: AgentEvent[] };
+      }
+    }
+    if (!result) throw new Error("对话连接中断，请重试");
     if (result.message.id !== message.id) throw new Error("会话响应与请求不匹配");
     save(threadId, {
       messages: [...prior.messages, message, ...result.events

@@ -89,6 +89,23 @@ pub async fn configured_provider() -> Result<Arc<dyn ModelProvider>> {
     })
 }
 
+/// Cloud instances are ephemeral, so connection negotiation must not run on
+/// every cold start. The first real turn uses OpenTopia's portable tool-capable
+/// profile; connection diagnostics remain available in the local setup path.
+pub fn configured_cloud_provider() -> Result<Arc<dyn ModelProvider>> {
+    let mut settings = provider_settings()?;
+    if settings.active_adapter_profile().is_none() {
+        if let Some(profile) = settings.provisional_adapter_profile_for_model(&settings.model) {
+            settings.apply_adapter_profile(profile);
+        }
+    }
+    configured_provider_from_settings(&settings).ok_or_else(|| {
+        anyhow!(
+            "Model provider is not configured; set OPENTOPIA_API_KEY, OPENTOPIA_MODEL, and OPENTOPIA_OPENAI_BASE_URL"
+        )
+    })
+}
+
 fn provider_settings() -> Result<ProviderSettings> {
     let Ok(database) = std::env::var("VIDEOFLOW_OPENTOPIA_DB") else {
         return Ok(ProviderSettings::from_env());
