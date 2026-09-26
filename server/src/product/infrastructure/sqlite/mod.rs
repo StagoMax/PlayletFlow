@@ -5,11 +5,13 @@ mod media;
 mod migrations;
 mod proposals;
 mod storyboard_creation;
+mod storyboard_duplication;
 mod storyboard_order;
 mod storyboard_storage;
 mod storyboards;
 mod support;
 mod workspace_nodes;
+mod workspace_media;
 mod workspace_threads;
 
 #[cfg(test)]
@@ -17,13 +19,15 @@ mod media_tests;
 
 pub use assets::SqliteAssetRepository;
 pub use demo_fixture::{
-    demo_storyboard_id, seed_demo_workspace, DEMO_PROJECT_ID, DEMO_STORYBOARD_COUNT,
+    demo_storyboard_id, ensure_workspace_project, seed_demo_workspace, DEMO_PROJECT_ID,
+    DEMO_STORYBOARD_COUNT,
 };
 pub use generation::SqliteGenerationRepository;
 pub use media::SqliteMediaRepository;
 pub use proposals::SqliteProposalRepository;
 pub use storyboards::SqliteStoryboardRepository;
 pub use workspace_nodes::SqliteWorkspaceNodeRepository;
+pub use workspace_media::SqliteWorkspaceMediaRepository;
 pub use workspace_threads::SqliteWorkspaceThreadStore;
 
 use crate::product::domain::ProductResult;

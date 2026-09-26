@@ -77,6 +77,150 @@ impl Drop for TestApp {
 }
 
 #[tokio::test]
+async fn duplicate_preserves_storyboard_content_and_reorder_persists() {
+    let app = TestApp::new();
+    let project = app.create_project("Film", "duplicate-project-key").await;
+    let project_id = project["id"].as_str().unwrap();
+    let (_, list) = app
+        .send(
+            "GET",
+            &format!("/api/v1/projects/{project_id}/storyboards"),
+            None,
+            None,
+        )
+        .await;
+    let source_id = list.unwrap()["items"][0]["id"].as_str().unwrap().to_owned();
+    let script_path = format!("/api/v1/projects/{project_id}/storyboards/{source_id}/script");
+    let (status, _) = app
+        .send(
+            "PATCH",
+            &script_path,
+            Some(json!({ "text": "Copy this scene", "expectedRevision": 1 })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let media_id = Uuid::new_v4().to_string();
+    let asset_id = Uuid::new_v4().to_string();
+    let section_id = Uuid::new_v4().to_string();
+    let folder_id = Uuid::new_v4().to_string();
+    let node_id = Uuid::new_v4().to_string();
+    let db = rusqlite::Connection::open(&app.path).unwrap();
+    db.execute(
+        "INSERT INTO media_items
+         (id, project_id, storyboard_id, kind, role, name, mime_type, source_object_key,
+          status, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 'image', 'keyframe', 'Frame', 'image/png', 'object/frame.png',
+                 'ready', '2026-01-01', '2026-01-01')",
+        rusqlite::params![media_id, project_id, source_id],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO assets (id, project_id, kind, name, created_at, updated_at)
+         VALUES (?1, ?2, 'character', 'Actor', '2026-01-01', '2026-01-01')",
+        rusqlite::params![asset_id, project_id],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO asset_sections
+         (id, project_id, storyboard_id, name, kind, position, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 'People', 'character', '1024', '2026-01-01', '2026-01-01')",
+        rusqlite::params![section_id, project_id, source_id],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO asset_bindings
+         (id, project_id, storyboard_id, section_id, asset_id, position, derived_media_id,
+          created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, '1024', ?6, '2026-01-01', '2026-01-01')",
+        rusqlite::params![
+            Uuid::new_v4().to_string(),
+            project_id,
+            source_id,
+            section_id,
+            asset_id,
+            media_id
+        ],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO workspace_nodes
+         (id, project_id, storyboard_id, kind, name, position, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 'folder', 'Shots', '1024', '2026-01-01', '2026-01-01')",
+        rusqlite::params![folder_id, project_id, source_id],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO workspace_nodes
+         (id, project_id, storyboard_id, parent_id, kind, name, object_type,
+          target_type, target_id, position, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'object', 'Frame', 'image', 'media', ?5,
+                 '1024', '2026-01-01', '2026-01-01')",
+        rusqlite::params![node_id, project_id, source_id, folder_id, media_id],
+    )
+    .unwrap();
+    drop(db);
+
+    let duplicate_path = format!("/api/v1/projects/{project_id}/storyboards/{source_id}/duplicate");
+    let (status, copied) = app
+        .send("POST", &duplicate_path, None, Some("duplicate-once-key"))
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let copied = copied.unwrap();
+    let copied_id = copied["id"].as_str().unwrap();
+    assert_ne!(copied_id, source_id);
+    assert_eq!(copied["script"]["text"], "Copy this scene");
+    assert_eq!(copied["counts"]["assetBindings"], 1);
+    assert_eq!(copied["counts"]["keyframes"], 1);
+    let (status, replay) = app
+        .send("POST", &duplicate_path, None, Some("duplicate-once-key"))
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(replay.unwrap()["id"], copied_id);
+
+    let db = rusqlite::Connection::open(&app.path).unwrap();
+    let cloned_media: String = db
+        .query_row(
+            "SELECT id FROM media_items WHERE storyboard_id = ?1",
+            [copied_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_ne!(cloned_media, media_id);
+    let binding_media: String = db
+        .query_row(
+            "SELECT derived_media_id FROM asset_bindings WHERE storyboard_id = ?1",
+            [copied_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(binding_media, cloned_media);
+    let node_media: String = db
+        .query_row(
+            "SELECT target_id FROM workspace_nodes
+             WHERE storyboard_id = ?1 AND kind = 'object' AND target_type = 'media'",
+            [copied_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(node_media, cloned_media);
+    drop(db);
+
+    let reorder_path = format!("/api/v1/projects/{project_id}/storyboards/{copied_id}/reorder");
+    let (status, reordered) = app
+        .send(
+            "POST",
+            &reorder_path,
+            Some(json!({ "beforeId": source_id, "afterId": null, "expectedRevision": 1 })),
+            Some("reorder-copied-key"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reordered.unwrap()["index"], 0);
+}
+
+#[tokio::test]
 async fn project_storyboard_and_script_routes_follow_the_contract() {
     let app = TestApp::new();
     let project = app.create_project("Film", "project-contract-key").await;

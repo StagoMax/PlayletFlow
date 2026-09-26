@@ -24,6 +24,22 @@ pub struct UpdateWorkspaceNode {
     pub expected_revision: i64,
 }
 
+#[derive(Clone, Debug)]
+pub struct DeleteWorkspaceNode {
+    pub project_id: ProjectId,
+    pub storyboard_id: StoryboardId,
+    pub node_id: String,
+    pub expected_revision: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct CopyWorkspaceNode {
+    pub project_id: ProjectId,
+    pub storyboard_id: StoryboardId,
+    pub node_id: String,
+    pub idempotency: IdempotencyContext,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateWorkspaceNodeInput {
@@ -44,6 +60,8 @@ pub trait WorkspaceNodeRepository: Send + Sync {
     ) -> ProductResult<Vec<WorkspaceNode>>;
     async fn create(&self, command: CreateWorkspaceNode) -> ProductResult<WorkspaceNode>;
     async fn update(&self, command: UpdateWorkspaceNode) -> ProductResult<WorkspaceNode>;
+    async fn delete(&self, command: DeleteWorkspaceNode) -> ProductResult<()>;
+    async fn copy(&self, command: CopyWorkspaceNode) -> ProductResult<WorkspaceNode>;
 }
 
 #[derive(Clone)]
@@ -112,5 +130,33 @@ impl WorkspaceNodeService {
         )?;
         validate_revision(command.expected_revision)?;
         self.repository.update(command).await
+    }
+
+    pub async fn delete(&self, command: DeleteWorkspaceNode) -> ProductResult<()> {
+        validate_revision(command.expected_revision)?;
+        self.repository.delete(command).await
+    }
+
+    pub async fn copy(
+        &self,
+        project_id: ProjectId,
+        storyboard_id: StoryboardId,
+        node_id: String,
+        idempotency_key: String,
+    ) -> ProductResult<WorkspaceNode> {
+        let idempotency = IdempotencyContext::new(
+            "copyWorkspaceNode",
+            idempotency_key,
+            &(project_id, storyboard_id, &node_id),
+            201,
+        )?;
+        self.repository
+            .copy(CopyWorkspaceNode {
+                project_id,
+                storyboard_id,
+                node_id,
+                idempotency,
+            })
+            .await
     }
 }

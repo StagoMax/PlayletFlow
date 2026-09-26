@@ -5,6 +5,7 @@ mod proposals;
 mod storyboard_views;
 mod storyboards;
 mod workspace_nodes;
+mod workspace_media;
 mod workspace_threads;
 
 #[cfg(test)]
@@ -20,8 +21,9 @@ use crate::product::application::workspace_threads::WorkspaceThreadService;
 use crate::product::infrastructure::sqlite::{
     ProductDatabase, SqliteAssetRepository, SqliteGenerationRepository, SqliteMediaRepository,
     SqliteProposalRepository, SqliteStoryboardRepository, SqliteWorkspaceNodeRepository,
+    SqliteWorkspaceMediaRepository,
 };
-use crate::product::infrastructure::MetadataOnlyMediaAccessProvider;
+use crate::product::infrastructure::{LocalMediaStore, MetadataOnlyMediaAccessProvider};
 use axum::Router;
 use std::sync::Arc;
 
@@ -37,7 +39,7 @@ pub fn router_with_media_access(
     database: ProductDatabase,
     media_access: Arc<dyn MediaAccessProvider>,
 ) -> Router {
-    compose_router(database, media_access, None)
+    compose_router(database, media_access, None, None)
 }
 
 /// Composition seam used by the local Runtime, where product workspaces and
@@ -58,13 +60,22 @@ pub fn router_with_workspace_and_media_access(
     workspace_threads: WorkspaceThreadService,
     media_access: Arc<dyn MediaAccessProvider>,
 ) -> Router {
-    compose_router(database, media_access, Some(workspace_threads))
+    compose_router(database, media_access, Some(workspace_threads), None)
+}
+
+pub fn router_with_workspace_and_local_media(
+    database: ProductDatabase,
+    workspace_threads: WorkspaceThreadService,
+    store: Arc<LocalMediaStore>,
+) -> Router {
+    compose_router(database, store.clone(), Some(workspace_threads), Some(store))
 }
 
 fn compose_router(
     database: ProductDatabase,
     media_access: Arc<dyn MediaAccessProvider>,
     workspace_threads: Option<WorkspaceThreadService>,
+    local_store: Option<Arc<LocalMediaStore>>,
 ) -> Router {
     let repository = Arc::new(SqliteStoryboardRepository::new(database.clone()));
     let service = StoryboardService::new(repository);
@@ -72,6 +83,8 @@ fn compose_router(
     let asset_service = AssetService::new(asset_repository);
     let media_repository = Arc::new(SqliteMediaRepository::new(database.clone()));
     let media_service = MediaCatalogService::new(media_repository, media_access);
+    let workspace_media_repository = SqliteWorkspaceMediaRepository::new(database.clone());
+    let workspace_media_router = workspace_media::router(workspace_media_repository, media_service.clone(), local_store);
     let proposal_repository = Arc::new(SqliteProposalRepository::new(database.clone()));
     let proposal_service = ProposalService::new(proposal_repository);
     let workspace_node_repository = Arc::new(SqliteWorkspaceNodeRepository::new(database.clone()));
@@ -81,6 +94,7 @@ fn compose_router(
     let router = storyboards::router(service)
         .merge(assets::router(asset_service))
         .merge(media::router(media_service))
+        .merge(workspace_media_router)
         .merge(proposals::router(proposal_service))
         .merge(workspace_nodes::router(workspace_node_service))
         .merge(generation::router(generation_service));

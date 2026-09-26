@@ -4,7 +4,8 @@ use super::support::{
 };
 use super::ProductDatabase;
 use crate::product::application::workspace_nodes::{
-    CreateWorkspaceNode, UpdateWorkspaceNode, WorkspaceNodeRepository,
+    CopyWorkspaceNode, CreateWorkspaceNode, DeleteWorkspaceNode, UpdateWorkspaceNode,
+    WorkspaceNodeRepository,
 };
 use crate::product::domain::{
     ProductError, ProductResult, ProjectId, StoryboardId, WorkspaceNode, WorkspaceNodeKind,
@@ -15,6 +16,7 @@ use chrono::Utc;
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 use serde_json::json;
+use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub struct SqliteWorkspaceNodeRepository {
@@ -60,6 +62,15 @@ impl WorkspaceNodeRepository for SqliteWorkspaceNodeRepository {
     async fn update(&self, command: UpdateWorkspaceNode) -> ProductResult<WorkspaceNode> {
         self.run(move |connection| update(connection, command))
             .await
+    }
+
+    async fn delete(&self, command: DeleteWorkspaceNode) -> ProductResult<()> {
+        self.run(move |connection| delete(connection, command))
+            .await
+    }
+
+    async fn copy(&self, command: CopyWorkspaceNode) -> ProductResult<WorkspaceNode> {
+        self.run(move |connection| copy(connection, command)).await
     }
 }
 
@@ -222,6 +233,192 @@ fn update(
     )?;
     transaction.commit()?;
     Ok(node)
+}
+
+fn delete(connection: &mut Connection, command: DeleteWorkspaceNode) -> ProductResult<()> {
+    let transaction = immediate(connection)?;
+    let current = load(
+        &transaction,
+        command.project_id,
+        command.storyboard_id,
+        &command.node_id,
+    )?
+    .ok_or(ProductError::NotFound)?;
+    if current.revision != command.expected_revision {
+        return Err(revision_error(
+            Some(current.revision),
+            command.expected_revision,
+        ));
+    }
+    reject_script_subtree(&transaction, &command.node_id)?;
+    let now = Utc::now().to_rfc3339();
+    // Only workspace-owned media has the same ID as its node. Keep shared
+    // storyboard and asset media intact when removing a reference from the tree.
+    transaction.execute(
+        "WITH RECURSIVE subtree(id) AS (
+            SELECT id FROM workspace_nodes WHERE id = ?1
+            UNION ALL SELECT child.id FROM workspace_nodes child JOIN subtree parent ON child.parent_id = parent.id
+         )
+         UPDATE media_items SET deleted_at = ?2, updated_at = ?2, revision = revision + 1
+         WHERE id IN (SELECT node.id FROM workspace_nodes node JOIN subtree ON node.id = subtree.id
+                      WHERE node.target_type = 'media' AND node.target_id = node.id)
+           AND project_id = ?3 AND storyboard_id = ?4 AND deleted_at IS NULL",
+        params![command.node_id, now, command.project_id.to_string(), command.storyboard_id.to_string()],
+    )?;
+    transaction.execute(
+        "DELETE FROM workspace_nodes WHERE id = ?1 AND project_id = ?2 AND storyboard_id = ?3",
+        params![
+            command.node_id,
+            command.project_id.to_string(),
+            command.storyboard_id.to_string()
+        ],
+    )?;
+    append_event(
+        &transaction,
+        command.project_id,
+        "workspaceNode.deleted",
+        json!({ "nodeId": command.node_id, "storyboardId": command.storyboard_id }),
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn copy(connection: &mut Connection, command: CopyWorkspaceNode) -> ProductResult<WorkspaceNode> {
+    let transaction = immediate(connection)?;
+    if let Some(saved) = replay::<WorkspaceNode>(&transaction, &command.idempotency)? {
+        transaction.commit()?;
+        return Ok(saved);
+    }
+    let source = load(
+        &transaction,
+        command.project_id,
+        command.storyboard_id,
+        &command.node_id,
+    )?
+    .ok_or(ProductError::NotFound)?;
+    reject_script_subtree(&transaction, &command.node_id)?;
+    let root_id = copy_subtree(&transaction, &source, source.parent_id.as_deref(), true)?;
+    let copied = load(
+        &transaction,
+        command.project_id,
+        command.storyboard_id,
+        &root_id,
+    )?
+    .ok_or(ProductError::NotFound)?;
+    append_event(
+        &transaction,
+        command.project_id,
+        "workspaceNode.copied",
+        json!({ "nodeId": copied.id, "sourceNodeId": source.id, "storyboardId": command.storyboard_id }),
+    )?;
+    remember(&transaction, &command.idempotency, &copied)?;
+    transaction.commit()?;
+    Ok(copied)
+}
+
+fn reject_script_subtree(transaction: &Transaction<'_>, node_id: &str) -> ProductResult<()> {
+    let contains_script: bool = transaction.query_row(
+        "WITH RECURSIVE subtree(id) AS (
+            SELECT id FROM workspace_nodes WHERE id = ?1
+            UNION ALL SELECT child.id FROM workspace_nodes child JOIN subtree parent ON child.parent_id = parent.id
+         )
+         SELECT EXISTS(SELECT 1 FROM workspace_nodes node JOIN subtree ON node.id = subtree.id
+                       WHERE node.target_type = 'script')",
+        [node_id],
+        |row| row.get(0),
+    )?;
+    if contains_script {
+        return Err(ProductError::Conflict {
+            code: "SCRIPT_NODE_REQUIRED",
+            message: "the storyboard script cannot be deleted or copied as a workspace node"
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn copy_subtree(
+    transaction: &Transaction<'_>,
+    source: &WorkspaceNode,
+    parent_id: Option<&str>,
+    is_root: bool,
+) -> ProductResult<String> {
+    let id = Uuid::new_v4().to_string();
+    let name = if is_root {
+        let prefix: String = source.name.chars().take(117).collect();
+        format!("{prefix} 副本")
+    } else {
+        source.name.clone()
+    };
+    let now = Utc::now().to_rfc3339();
+    let mut target_type = source.target_type;
+    let mut target_id = source.target_id.clone();
+    if source.target_type == Some(WorkspaceTargetType::Media) {
+        if let Some(media_id) = source.target_id.as_deref() {
+            let copied = transaction.execute(
+                "INSERT INTO media_items
+                 (id, project_id, storyboard_id, kind, role, name, prompt, mime_type,
+                  source_object_key, thumbnail_object_key, width, height, duration_ms, status,
+                  revision, created_at, updated_at)
+                 SELECT ?1, project_id, storyboard_id, kind, 'custom', ?2, prompt, mime_type,
+                        CASE WHEN status = 'processing' THEN NULL ELSE source_object_key END,
+                        CASE WHEN status = 'processing' THEN NULL ELSE thumbnail_object_key END,
+                        width, height, duration_ms,
+                        CASE WHEN status = 'processing' THEN 'placeholder' ELSE status END,
+                        1, ?3, ?3
+                 FROM media_items WHERE id = ?4 AND project_id = ?5 AND deleted_at IS NULL",
+                params![id, name, now, media_id, source.project_id.to_string()],
+            )?;
+            if copied > 0 {
+                target_id = Some(id.clone());
+            }
+        }
+    } else if source.target_type == Some(WorkspaceTargetType::Empty) {
+        target_id = None;
+    } else if source.target_type.is_none() {
+        target_type = None;
+        target_id = None;
+    }
+    let position = next_position(
+        transaction,
+        "workspace_nodes",
+        "storyboard_id",
+        &source.storyboard_id.to_string(),
+    )?;
+    transaction.execute(
+        "INSERT INTO workspace_nodes
+         (id, project_id, storyboard_id, parent_id, kind, name, object_type, target_type,
+          target_id, position, revision, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11, ?11)",
+        params![
+            id,
+            source.project_id.to_string(),
+            source.storyboard_id.to_string(),
+            parent_id,
+            source.kind.as_str(),
+            name,
+            source.object_type.map(WorkspaceObjectType::as_str),
+            target_type.map(WorkspaceTargetType::as_str),
+            target_id,
+            position,
+            now
+        ],
+    )?;
+    if source.kind == WorkspaceNodeKind::Folder {
+        let mut statement = transaction.prepare(
+            "SELECT id, project_id, storyboard_id, parent_id, kind, name, object_type,
+                    target_type, target_id, position, revision, created_at, updated_at
+             FROM workspace_nodes WHERE parent_id = ?1 ORDER BY position, id",
+        )?;
+        let children = statement
+            .query_map([&source.id], node_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        for child in children {
+            copy_subtree(transaction, &child, Some(&id), false)?;
+        }
+    }
+    Ok(id)
 }
 
 fn ensure_storyboard(

@@ -11,6 +11,7 @@ use tokio::io::AsyncWriteExt;
 
 const MAX_GENERATED_MEDIA_BYTES: u64 = 512 * 1024 * 1024;
 const GENERATED_PREFIX: &str = "generated";
+const UPLOADED_PREFIX: &str = "uploaded";
 
 /// Safe default for installations that have not configured object storage yet.
 ///
@@ -45,6 +46,8 @@ impl LocalMediaStore {
         let root = root.as_ref().to_path_buf();
         std::fs::create_dir_all(root.join(GENERATED_PREFIX))
             .map_err(|error| ProductError::Storage(error.to_string()))?;
+        std::fs::create_dir_all(root.join(UPLOADED_PREFIX))
+            .map_err(|error| ProductError::Storage(error.to_string()))?;
         let client = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(15))
             .timeout(std::time::Duration::from_secs(30 * 60))
@@ -57,9 +60,18 @@ impl LocalMediaStore {
         &self.root
     }
 
+    pub async fn store_upload(&self, bytes: &[u8], mime_type: &str) -> ProductResult<String> {
+        let extension = media_extension(mime_type)?;
+        let object_key = format!("{UPLOADED_PREFIX}/{}.{}", uuid::Uuid::new_v4(), extension);
+        tokio::fs::write(self.root.join(&object_key), bytes)
+            .await
+            .map_err(|error| ProductError::Storage(error.to_string()))?;
+        Ok(object_key)
+    }
+
     fn access(&self, media: &MediaItem) -> Option<MediaAccessGrant> {
         let key = media.source_object_key.as_deref()?;
-        if !safe_generated_key(key) {
+        if !safe_media_key(key) {
             return None;
         }
         Some(MediaAccessGrant {
@@ -160,9 +172,9 @@ impl MediaAccessProvider for LocalMediaStore {
     }
 }
 
-fn safe_generated_key(key: &str) -> bool {
+fn safe_media_key(key: &str) -> bool {
     let mut parts = key.split('/');
-    parts.next() == Some(GENERATED_PREFIX)
+    matches!(parts.next(), Some(GENERATED_PREFIX | UPLOADED_PREFIX))
         && parts
             .next()
             .is_some_and(|name| !name.is_empty() && !name.contains(['/', '\\']))
@@ -188,9 +200,10 @@ mod tests {
 
     #[test]
     fn generated_keys_cannot_escape_the_media_root() {
-        assert!(safe_generated_key("generated/job.mp4"));
-        assert!(!safe_generated_key("../secret"));
-        assert!(!safe_generated_key("generated/nested/file.mp4"));
-        assert!(!safe_generated_key("private/source"));
+        assert!(safe_media_key("generated/job.mp4"));
+        assert!(safe_media_key("uploaded/file.png"));
+        assert!(!safe_media_key("../secret"));
+        assert!(!safe_media_key("generated/nested/file.mp4"));
+        assert!(!safe_media_key("private/source"));
     }
 }

@@ -39,8 +39,19 @@ pub fn demo_storyboard_id(index: usize) -> String {
     format!("20000000-0000-4000-8000-{index:012}")
 }
 
+/// Keeps the local workspace usable without populating any demo content.
+pub fn ensure_workspace_project(database: &ProductDatabase) -> ProductResult<()> {
+    let connection = database.connect()?;
+    connection.execute(
+        "INSERT OR IGNORE INTO projects (id, name, revision, created_at, updated_at)
+         VALUES (?1, '霓虹港湾 · 概念短片', 1, ?2, ?2)",
+        params![DEMO_PROJECT_ID, FIXTURE_TIME],
+    )?;
+    Ok(())
+}
+
 /// Seeds the deterministic browser/E2E workspace. This is called only when the
-/// local runtime is explicitly started with `--fixture`.
+/// local runtime is explicitly started with `--seed-demo-workspace`.
 pub fn seed_demo_workspace(database: &ProductDatabase) -> ProductResult<()> {
     let mut connection = database.connect()?;
     let transaction = immediate(&mut connection)?;
@@ -65,7 +76,7 @@ pub fn seed_demo_workspace(database: &ProductDatabase) -> ProductResult<()> {
         let name = STORYBOARD_NAMES
             .get(offset)
             .map(|name| (*name).to_owned())
-            .unwrap_or_else(|| format!("验收分镜 {index}"));
+            .unwrap_or_else(|| format!("验收片段 {index}"));
         let storyboard_id = demo_storyboard_id(index);
         let section_id = scoped_id(3, index);
         let binding_id = scoped_id(5, index);
@@ -73,6 +84,11 @@ pub fn seed_demo_workspace(database: &ProductDatabase) -> ProductResult<()> {
         let script = format!(
             "雨水打在金属顶棚上。林舟停在{name}的入口，确认终端上闪烁的坐标后继续向前。镜头从环境全景缓慢推进到她手中的信号终端。"
         );
+        let new_storyboard: bool = transaction.query_row(
+            "SELECT NOT EXISTS(SELECT 1 FROM storyboards WHERE id = ?1)",
+            [&storyboard_id],
+            |row| row.get(0),
+        )?;
         transaction.execute(
             "INSERT INTO storyboards
              (id, project_id, name, position, revision, created_at, updated_at)
@@ -135,7 +151,9 @@ pub fn seed_demo_workspace(database: &ProductDatabase) -> ProductResult<()> {
                  updated_at = excluded.updated_at",
             params![media_id, DEMO_PROJECT_ID, storyboard_id, FIXTURE_TIME],
         )?;
-        seed_workspace_nodes(&transaction, &storyboard_id, index)?;
+        if new_storyboard {
+            seed_workspace_nodes(&transaction, &storyboard_id, index)?;
+        }
     }
     transaction.commit()?;
     Ok(())
@@ -164,7 +182,7 @@ fn seed_workspace_nodes(
         (&scene_folder, Some(asset_folder.as_str()), "场景"),
         (&prop_folder, Some(asset_folder.as_str()), "道具"),
         (&subject_folder, Some(character_folder.as_str()), "林舟"),
-        (&keyframe_folder, Some(video_folder.as_str()), "分镜关键帧"),
+        (&keyframe_folder, Some(video_folder.as_str()), "片段关键帧"),
         (&generated_folder, Some(video_folder.as_str()), "生成的视频"),
     ];
     let mut position = 0_u64;
@@ -187,7 +205,7 @@ fn seed_workspace_nodes(
         (
             format!("script-{storyboard_id}"),
             script_folder.as_str(),
-            "该分镜的脚本",
+            "该片段的脚本",
             "text",
             "script",
             storyboard_id.to_owned(),
@@ -305,7 +323,7 @@ fn insert_fixture_node(
          (id, project_id, storyboard_id, parent_id, kind, name, object_type, target_type,
           target_id, position, revision, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11, ?11)
-         ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
+         ON CONFLICT(id) DO NOTHING",
         params![
             id,
             DEMO_PROJECT_ID,

@@ -3,7 +3,7 @@ use crate::product::domain::{
     StoryboardCounts, StoryboardId, StoryboardScript, StoryboardSnapshot,
 };
 use crate::product::infrastructure::sqlite::support::{
-    optional_time_from_row, time_from_row, uuid_from_row,
+    format_position, optional_time_from_row, time_from_row, uuid_from_row, POSITION_STEP,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 
@@ -59,6 +59,48 @@ pub(super) fn insert_script(
             script.text,
             script.revision,
             script.updated_at.to_rfc3339()
+        ],
+    )?;
+    Ok(())
+}
+
+pub(super) fn insert_default_workspace_nodes(
+    transaction: &Transaction<'_>,
+    storyboard: &Storyboard,
+) -> ProductResult<()> {
+    let storyboard_id = storyboard.id.to_string();
+    let project_id = storyboard.project_id.to_string();
+    let now = storyboard.created_at.to_rfc3339();
+    let script_folder = format!("folder-script-{storyboard_id}");
+    for (index, (id, name)) in [
+        (script_folder.clone(), "脚本"),
+        (format!("folder-assets-{storyboard_id}"), "资产"),
+        (format!("folder-video-{storyboard_id}"), "视频"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        transaction.execute(
+            "INSERT INTO workspace_nodes
+             (id, project_id, storyboard_id, parent_id, kind, name, position, revision, created_at, updated_at)
+             VALUES (?1, ?2, ?3, NULL, 'folder', ?4, ?5, 1, ?6, ?6)",
+            params![id, project_id, storyboard_id, name,
+                format_position((index as u64 + 1) * POSITION_STEP), now],
+        )?;
+    }
+    transaction.execute(
+        "INSERT INTO workspace_nodes
+         (id, project_id, storyboard_id, parent_id, kind, name, object_type,
+          target_type, target_id, position, revision, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'object', '该片段的脚本', 'text',
+                 'script', ?3, ?5, 1, ?6, ?6)",
+        params![
+            format!("script-{storyboard_id}"),
+            project_id,
+            storyboard_id,
+            script_folder,
+            format_position(4 * POSITION_STEP),
+            now
         ],
     )?;
     Ok(())

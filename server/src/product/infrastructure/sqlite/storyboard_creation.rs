@@ -1,6 +1,8 @@
 use super::assets::copy_in_transaction;
 use super::storyboard_order::allocate_after;
-use super::storyboard_storage::{insert_script, insert_storyboard, require_project};
+use super::storyboard_storage::{
+    insert_default_workspace_nodes, insert_script, insert_storyboard, require_project,
+};
 use super::support::{append_event, immediate, remember, replay};
 use crate::product::application::assets::CopyAssetBindingsInput;
 use crate::product::application::storyboards::{
@@ -28,6 +30,7 @@ pub(super) fn create_storyboard_with_assets(
         allocate_after(&transaction, storyboard.project_id, insert_after_id, None)?;
     insert_storyboard(&transaction, &storyboard)?;
     insert_script(&transaction, &script)?;
+    insert_default_workspace_nodes(&transaction, &storyboard)?;
     append_event(
         &transaction,
         storyboard.project_id,

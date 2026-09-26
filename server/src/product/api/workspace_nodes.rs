@@ -1,14 +1,14 @@
 use crate::product::api::error::ProductApiError;
 use crate::product::application::workspace_nodes::{
-    CreateWorkspaceNodeInput, UpdateWorkspaceNode, WorkspaceNodeService,
+    CreateWorkspaceNodeInput, DeleteWorkspaceNode, UpdateWorkspaceNode, WorkspaceNodeService,
 };
 use crate::product::domain::{
     ProjectId, StoryboardId, WorkspaceNode, WorkspaceNodeKind, WorkspaceObjectType,
 };
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::routing::{get, patch};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -35,6 +35,12 @@ struct UpdateWorkspaceNodeRequest {
     expected_revision: i64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteWorkspaceNodeQuery {
+    expected_revision: i64,
+}
+
 type ApiResult<T> = Result<T, ProductApiError>;
 
 pub(super) fn router(service: WorkspaceNodeService) -> Router {
@@ -45,7 +51,11 @@ pub(super) fn router(service: WorkspaceNodeService) -> Router {
         )
         .route(
             "/api/v1/projects/:project_id/storyboards/:storyboard_id/workspace-nodes/:node_id",
-            patch(update_node),
+            patch(update_node).delete(delete_node),
+        )
+        .route(
+            "/api/v1/projects/:project_id/storyboards/:storyboard_id/workspace-nodes/:node_id/copies",
+            post(copy_node),
         )
         .with_state(WorkspaceNodeApiState { service })
 }
@@ -109,6 +119,40 @@ async fn update_node(
             })
             .await?,
     ))
+}
+
+async fn delete_node(
+    State(state): State<WorkspaceNodeApiState>,
+    Path((project_id, storyboard_id, node_id)): Path<(String, String, String)>,
+    Query(query): Query<DeleteWorkspaceNodeQuery>,
+) -> ApiResult<StatusCode> {
+    state
+        .service
+        .delete(DeleteWorkspaceNode {
+            project_id: parse_project_id(&project_id)?,
+            storyboard_id: parse_storyboard_id(&storyboard_id)?,
+            node_id: validate_node_id(node_id)?,
+            expected_revision: query.expected_revision,
+        })
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn copy_node(
+    State(state): State<WorkspaceNodeApiState>,
+    Path((project_id, storyboard_id, node_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> ApiResult<(StatusCode, Json<WorkspaceNode>)> {
+    let node = state
+        .service
+        .copy(
+            parse_project_id(&project_id)?,
+            parse_storyboard_id(&storyboard_id)?,
+            validate_node_id(node_id)?,
+            idempotency_key(&headers)?,
+        )
+        .await?;
+    Ok((StatusCode::CREATED, Json(node)))
 }
 
 fn idempotency_key(headers: &HeaderMap) -> ApiResult<String> {

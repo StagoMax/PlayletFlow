@@ -81,6 +81,7 @@ impl StoryboardCatalogRepository for SqliteStoryboardRepository {
             insert_project(&transaction, &project)?;
             insert_storyboard(&transaction, &first_storyboard)?;
             insert_script(&transaction, &script)?;
+            insert_default_workspace_nodes(&transaction, &first_storyboard)?;
             append_event(
                 &transaction,
                 project.id,
@@ -169,6 +170,7 @@ impl StoryboardCatalogRepository for SqliteStoryboardRepository {
                 allocate_after(&transaction, storyboard.project_id, insert_after_id, None)?;
             insert_storyboard(&transaction, &storyboard)?;
             insert_script(&transaction, &script)?;
+            insert_default_workspace_nodes(&transaction, &storyboard)?;
             append_event(
                 &transaction,
                 storyboard.project_id,
@@ -320,6 +322,23 @@ impl StoryboardCatalogRepository for SqliteStoryboardRepository {
             remember(&transaction, &idempotency, &storyboard)?;
             transaction.commit()?;
             Ok(storyboard)
+        })
+        .await
+    }
+
+    async fn duplicate_storyboard(
+        &self,
+        source_id: StoryboardId,
+        storyboard: Storyboard,
+        idempotency: IdempotencyContext,
+    ) -> ProductResult<Storyboard> {
+        self.run(move |connection| {
+            super::storyboard_duplication::duplicate_storyboard(
+                connection,
+                source_id,
+                storyboard,
+                idempotency,
+            )
         })
         .await
     }

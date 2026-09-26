@@ -1,0 +1,1 @@
+-- This repair only restores required navigation references. Rollback keeps them.

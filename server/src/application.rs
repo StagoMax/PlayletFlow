@@ -1,4 +1,7 @@
-use crate::{api, cloud, cloud_generation, conversation, product, rate_limit, runtime};
+use crate::{
+    api, cloud, cloud_generation, conversation, conversation_references, product, rate_limit,
+    runtime,
+};
 use anyhow::Result;
 use opentopia_core::model::AgentEventPayload;
 use opentopia_core::provider::{MockProvider, ModelProvider};
@@ -28,6 +31,17 @@ impl conversation::ConversationContextProvider for WorkspaceContextAdapter {
     async fn context_for_thread(&self, thread_id: Uuid) -> Result<Option<String>> {
         self.0.model_context(thread_id).await.map_err(Into::into)
     }
+
+    async fn resolve_references(
+        &self,
+        thread_id: Uuid,
+        reference_ids: &[String],
+    ) -> Result<Vec<conversation_references::WorkspaceReference>> {
+        self.0
+            .resolve_references(thread_id, reference_ids)
+            .await
+            .map_err(Into::into)
+    }
 }
 
 pub async fn run(args: Vec<String>) -> Result<()> {
@@ -40,6 +54,7 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         return Ok(());
     }
     let fixture = args.iter().any(|arg| arg == "--fixture");
+    let seed_demo_workspace = args.iter().any(|arg| arg == "--seed-demo-workspace");
     if std::env::var("VIDEOFLOW_CLOUD").as_deref() == Ok("1") {
         let state = cloud::CloudState {
             provider: Arc::new(tokio::sync::OnceCell::new()),
@@ -57,12 +72,12 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         println!("Videoflow cloud API listening on port {port}");
         axum::serve(listener, cloud::router(state)).await?;
     } else {
-        run_local(fixture).await?;
+        run_local(fixture, seed_demo_workspace).await?;
     }
     Ok(())
 }
 
-async fn run_local(fixture: bool) -> Result<()> {
+async fn run_local(fixture: bool, seed_demo_workspace: bool) -> Result<()> {
     let provider: Arc<dyn ModelProvider> = if fixture {
         println!("Using the local fixture provider; responses are not from a remote model");
         Arc::new(MockProvider)
@@ -71,11 +86,17 @@ async fn run_local(fixture: bool) -> Result<()> {
     };
     let database = std::env::var("VIDEOFLOW_DB")
         .unwrap_or_else(|_| ".videoflow/conversations.sqlite".to_owned());
-    let store = Arc::new(SqliteSessionStore::open(database)?);
+    let store = Arc::new(SqliteSessionStore::open(&database)?);
+    let migrated_references =
+        conversation_references::migrate_legacy_message_references(&database)?;
+    if migrated_references > 0 {
+        println!("Converted {migrated_references} legacy conversation reference messages");
+    }
     let product_database = std::env::var("VIDEOFLOW_PRODUCT_DB")
         .unwrap_or_else(|_| ".videoflow/product.sqlite".to_owned());
     let product_database = product::ProductDatabase::open(product_database)?;
-    if fixture {
+    product::infrastructure::sqlite::ensure_workspace_project(&product_database)?;
+    if seed_demo_workspace {
         product::infrastructure::sqlite::seed_demo_workspace(&product_database)?;
     }
     println!(
@@ -120,7 +141,7 @@ async fn run_local(fixture: bool) -> Result<()> {
         .unwrap_or(8788);
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?;
     println!("Videoflow runtime API listening on http://127.0.0.1:{port}");
-    let product_router = product::api::router_with_workspace_and_media_access(
+    let product_router = product::api::router_with_workspace_and_local_media(
         product_database,
         workspace_threads,
         media_store,

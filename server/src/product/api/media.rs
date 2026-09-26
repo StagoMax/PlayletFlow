@@ -197,7 +197,7 @@ struct PageResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct MediaResponse {
+pub(super) struct MediaResponse {
     id: MediaId,
     project_id: ProjectId,
     owner: MediaOwner,

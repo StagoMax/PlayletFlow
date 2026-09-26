@@ -38,6 +38,27 @@ const MIGRATIONS: &[Migration] = &[
         #[cfg(test)]
         down: include_str!("v004_workspace_nodes_down.sql"),
     },
+    Migration {
+        version: 5,
+        name: "proposal_generation_inputs",
+        up: include_str!("v005_proposal_generation_inputs.sql"),
+        #[cfg(test)]
+        down: include_str!("v005_proposal_generation_inputs_down.sql"),
+    },
+    Migration {
+        version: 6,
+        name: "default_workspace_nodes",
+        up: include_str!("v006_default_workspace_nodes.sql"),
+        #[cfg(test)]
+        down: include_str!("v006_default_workspace_nodes_down.sql"),
+    },
+    Migration {
+        version: 7,
+        name: "restore_storyboard_script_nodes",
+        up: include_str!("v007_restore_storyboard_script_nodes.sql"),
+        #[cfg(test)]
+        down: include_str!("v007_restore_storyboard_script_nodes_down.sql"),
+    },
 ];
 
 pub fn apply_all(connection: &mut Connection) -> ProductResult<()> {
@@ -148,11 +169,46 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(applied, 4);
+        assert_eq!(applied, 7);
 
         rollback_all(&mut connection).expect("roll back schema");
         assert!(!table_exists(&connection, "projects"));
         assert!(table_exists(&connection, "product_schema_migrations"));
+    }
+
+    #[test]
+    fn restores_missing_script_node_without_changing_script_folder() {
+        let mut connection = database();
+        apply_all(&mut connection).expect("apply schema");
+        let now = "2026-09-26T00:00:00Z";
+        connection.execute(
+            "INSERT INTO projects (id, name, revision, created_at, updated_at) VALUES ('p1', 'P', 1, ?1, ?1)",
+            [now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO storyboards (id, project_id, name, position, revision, created_at, updated_at)
+             VALUES ('s1', 'p1', 'Scene', '00000000001000000000', 1, ?1, ?1)",
+            [now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO workspace_nodes (id, project_id, storyboard_id, kind, name, position, revision, created_at, updated_at)
+             VALUES ('existing-folder', 'p1', 's1', 'folder', '脚本', '00000000001000000000', 1, ?1, ?1)",
+            [now],
+        ).unwrap();
+        connection
+            .execute_batch(include_str!("v007_restore_storyboard_script_nodes.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("v007_restore_storyboard_script_nodes.sql"))
+            .unwrap();
+        let (parent, count): (String, i64) = connection.query_row(
+            "SELECT parent_id, (SELECT COUNT(*) FROM workspace_nodes WHERE storyboard_id = 's1' AND target_type = 'script')
+             FROM workspace_nodes WHERE storyboard_id = 's1' AND target_type = 'script'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(parent, "existing-folder");
+        assert_eq!(count, 1);
     }
 
     #[test]

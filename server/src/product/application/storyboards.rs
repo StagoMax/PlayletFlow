@@ -111,6 +111,12 @@ pub trait StoryboardCatalogRepository: Send + Sync {
         command: ReorderStoryboard,
         idempotency: IdempotencyContext,
     ) -> ProductResult<Storyboard>;
+    async fn duplicate_storyboard(
+        &self,
+        source_id: StoryboardId,
+        storyboard: Storyboard,
+        idempotency: IdempotencyContext,
+    ) -> ProductResult<Storyboard>;
     async fn delete_storyboard(
         &self,
         project_id: ProjectId,
@@ -166,7 +172,7 @@ impl StoryboardService {
         let idempotency_key = validate_idempotency_key(idempotency_key)?;
         let now = Utc::now();
         let project = Project::new(name.clone(), now)?;
-        let storyboard = Storyboard::new(project.id, "分镜 1", now)?;
+        let storyboard = Storyboard::new(project.id, "片段 1", now)?;
         let script = StoryboardScript::empty(storyboard.id, now);
         let idempotency = IdempotencyContext::new("createProject", idempotency_key, &name, 201)?;
         self.repository
@@ -365,6 +371,37 @@ impl StoryboardService {
             .reorder_storyboard(command, idempotency)
             .await?;
         self.get_storyboard(project_id, storyboard_id).await
+    }
+
+    pub async fn duplicate_storyboard(
+        &self,
+        project_id: ProjectId,
+        source_id: StoryboardId,
+        idempotency_key: String,
+    ) -> ProductResult<StoryboardSnapshot> {
+        let key = validate_idempotency_key(idempotency_key)?;
+        let source = self.get_storyboard(project_id, source_id).await?;
+        let suffix = "（副本）";
+        let available = MAX_STORYBOARD_NAME_CHARS - suffix.chars().count();
+        let name = format!(
+            "{}{}",
+            source
+                .entry
+                .storyboard
+                .name
+                .chars()
+                .take(available)
+                .collect::<String>(),
+            suffix
+        );
+        let storyboard = Storyboard::new(project_id, name, Utc::now())?;
+        let idempotency =
+            IdempotencyContext::new("duplicateStoryboard", key, &(project_id, source_id), 201)?;
+        let created = self
+            .repository
+            .duplicate_storyboard(source_id, storyboard, idempotency)
+            .await?;
+        self.get_storyboard(project_id, created.id).await
     }
 
     pub async fn delete_storyboard(

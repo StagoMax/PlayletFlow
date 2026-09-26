@@ -4,6 +4,7 @@ mod cloud;
 mod cloud_generation;
 mod conversation;
 mod conversation_events;
+mod conversation_references;
 mod history;
 pub mod product;
 mod rate_limit;

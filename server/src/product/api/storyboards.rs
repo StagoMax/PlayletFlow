@@ -50,6 +50,10 @@ pub fn router(service: StoryboardService) -> Router {
             post(reorder_storyboard),
         )
         .route(
+            "/api/v1/projects/:project_id/storyboards/:storyboard_id/duplicate",
+            post(duplicate_storyboard),
+        )
+        .route(
             "/api/v1/projects/:project_id/storyboards/:storyboard_id/script",
             get(get_script).patch(update_script),
         )
@@ -303,6 +307,26 @@ async fn reorder_storyboard(
         .await?;
     Ok(Json(
         detail_response(&state.service, project_id, snapshot).await?,
+    ))
+}
+
+async fn duplicate_storyboard(
+    State(state): State<StoryboardApiState>,
+    Path((project_id, storyboard_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> ApiResult<(StatusCode, Json<StoryboardDetailResponse>)> {
+    let project_id = parse_project_id(&project_id)?;
+    let snapshot = state
+        .service
+        .duplicate_storyboard(
+            project_id,
+            parse_storyboard_id(&storyboard_id)?,
+            idempotency_key(&headers)?,
+        )
+        .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(detail_response(&state.service, project_id, snapshot).await?),
     ))
 }
 
