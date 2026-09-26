@@ -678,7 +678,7 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .script-save-button:not(:disabled):hover { filter: brightness(1.07); transform: translateY(-1px); }
 .script-save-button svg { width: 15px; height: 15px; }
 .script-editor-body { display: flex; flex: 1; min-height: 0; flex-direction: column; }
-.script-editor-diff { overflow: auto; padding: clamp(30px, 5vw, 68px) clamp(32px, 7vw, 88px); color: #dce0ea; background: transparent; font-family: "Noto Serif SC", "Songti SC", "Microsoft YaHei", sans-serif; font-size: clamp(14px, 1.15vw, 16px); line-height: 1.95; }
+.script-editor-preview { overflow: auto; padding: clamp(30px, 5vw, 68px) clamp(32px, 7vw, 88px); color: #dce0ea; background: transparent; font-family: "Noto Serif SC", "Songti SC", "Microsoft YaHei", sans-serif; font-size: clamp(14px, 1.15vw, 16px); line-height: 1.95; white-space: pre-wrap; cursor: text; user-select: text; }
 .script-editor-incoming { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 16px; color: #ffdca0; border-bottom: 1px solid #5b451f; background: #2c2414; font-size: 11px; line-height: 1.5; }
 .script-editor-incoming span { min-width: 0; }
 .script-editor-incoming strong { margin-right: 7px; color: #fff0bd; }
@@ -874,7 +874,7 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
   .media-prompt-composer { border-radius: 13px; }
   .canvas-header { padding: 0 16px; }
   .script-editor-actions { min-width: 0; }
-  .script-editor-diff { min-height: 440px; padding: 28px 22px; }
+  .script-editor-preview { min-height: 440px; padding: 28px 22px; }
   .script-editor-incoming { align-items: flex-start; flex-direction: column; }
   .script-editor-body textarea { min-height: 440px; padding: 28px 22px; }
   .script-editor-footer { align-items: flex-start; flex-direction: column; gap: 6px; padding: 11px 18px 14px; }

@@ -1,7 +1,7 @@
 import { MediaMetadata } from "../preview/MediaMetadata";
 import { workspaceComposerAssets } from "../composer/workspaceAssets";
 import type { ApplyProposalResponse, ChangeProposal } from "../productApi/generated";
-import { ProposalActions, ScriptProposalReview, type ProposalClient } from "../proposals";
+import { ProposalActions, type ProposalClient } from "../proposals";
 import { MediaPromptComposer } from "../preview/MediaPromptComposer";
 import { MediaViewer } from "../preview/MediaViewer";
 import { Icon } from "./Icons";
@@ -76,7 +76,7 @@ export function WorkspaceCanvas({
                 }}
               />
             ),
-            content: <ScriptProposalReview proposal={scriptProposal} />,
+            text: scriptProposal.proposedValue,
           } : null}
         />
       ) : (

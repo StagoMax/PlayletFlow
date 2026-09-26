@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const browserErrors = new WeakMap<object, string[]>();
 
@@ -417,41 +417,45 @@ test("脚本选中后可编辑并保存", async ({ page }) => {
   await expect(page.locator(".script-card")).toContainText(revised);
 });
 
-test("AI 脚本建议以 Git 式差异展示，确认后更新正式脚本与版本", async ({ page }) => {
-  const before = "雨水打在金属顶棚上。林舟停在桥下短暂对峙的入口，确认终端上闪烁的坐标后继续向前。镜头从环境全景缓慢推进到她手中的信号终端。";
-  const proposed = "雨水敲击金属顶棚。\n林舟在桥下入口停步，重新确认终端坐标。\n镜头从环境全景缓慢推进到闪烁的信号终端。";
-  const proposal = {
-    id: "proposal-script-review",
-    projectId: "10000000-0000-4000-8000-000000000001",
-    storyboardId: "20000000-0000-4000-8000-000000000012",
-    target: { type: "script", storyboardId: "20000000-0000-4000-8000-000000000012" },
-    baseRevision: 6,
-    beforeValue: before,
-    proposedValue: proposed,
-    summary: "收紧开场节奏并拆分镜头动作",
-    status: "pending",
-    source: {
-      type: "ai",
-      threadId: "thread-script-review",
-      turnId: "turn-script-review",
-      toolCallId: "tool-script-review",
-    },
-    revision: 1,
-    createdAt: "2026-09-26T08:00:00.000Z",
-    resolvedAt: null,
-  };
+const scriptBeforeProposal = "雨水打在金属顶棚上。林舟停在桥下短暂对峙的入口，确认终端上闪烁的坐标后继续向前。镜头从环境全景缓慢推进到她手中的信号终端。";
+const scriptProposalText = "雨水敲击金属顶棚。\n林舟在桥下入口停步，重新确认终端坐标。\n镜头从环境全景缓慢推进到闪烁的信号终端。";
+const scriptProposal = {
+  id: "proposal-script-review",
+  projectId: "10000000-0000-4000-8000-000000000001",
+  storyboardId: "20000000-0000-4000-8000-000000000012",
+  target: { type: "script", storyboardId: "20000000-0000-4000-8000-000000000012" },
+  baseRevision: 6,
+  beforeValue: scriptBeforeProposal,
+  proposedValue: scriptProposalText,
+  summary: "收紧开场节奏并拆分镜头动作",
+  status: "pending",
+  source: {
+    type: "ai",
+    threadId: "thread-script-review",
+    turnId: "turn-script-review",
+    toolCallId: "tool-script-review",
+  },
+  revision: 1,
+  createdAt: "2026-09-26T08:00:00.000Z",
+  resolvedAt: null,
+};
 
+async function mockPendingScriptProposal(page: Page) {
   await page.route("**/api/v1/projects/**/storyboards/**/proposals?**", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([proposal]) }),
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([scriptProposal]) }),
   );
   await page.route("**/api/v1/projects/**/storyboards/20000000-0000-4000-8000-000000000012/script", (route) => {
     if (route.request().method() !== "GET") return route.continue();
     return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ text: before, revision: 6, updatedAt: "2026-09-26T08:00:00.000Z" }),
+      body: JSON.stringify({ text: scriptBeforeProposal, revision: 6, updatedAt: "2026-09-26T08:00:00.000Z" }),
     });
   });
+}
+
+test("AI 脚本建议直接展示最新版，确认后更新正式脚本与版本", async ({ page }) => {
+  await mockPendingScriptProposal(page);
   await page.route("**/api/v1/projects/**/proposals/proposal-script-review/apply", async (route) => {
     expect(route.request().postDataJSON()).toMatchObject({
       expectedProposalRevision: 1,
@@ -461,7 +465,7 @@ test("AI 脚本建议以 Git 式差异展示，确认后更新正式脚本与版
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        proposal: { ...proposal, status: "applied", revision: 2, resolvedAt: "2026-09-26T08:01:00.000Z" },
+        proposal: { ...scriptProposal, status: "applied", revision: 2, resolvedAt: "2026-09-26T08:01:00.000Z" },
         target: { type: "script", revision: 7 },
         generationJob: null,
       }),
@@ -474,25 +478,50 @@ test("AI 脚本建议以 Git 式差异展示，确认后更新正式脚本与版
   await expect(page.locator(".proposal-panel")).toHaveCount(0);
   await expect(page.getByText("AI 修改建议")).toHaveCount(0);
   await expect(page.locator(".script-save-state")).toHaveCount(0);
-  await expect(page.locator(".proposal-diff--editor")).toBeVisible();
-  await expect(page.locator(".proposal-diff__line--removed")).toContainText(before);
-  await expect(page.locator(".proposal-diff__line--added")).toHaveCount(3);
-  await expect(page.locator(".proposal-diff--editor .proposal-diff__marker").first()).toHaveCSS("display", "none");
-  await expect(page.locator(".proposal-diff--editor .proposal-diff__number").first()).toHaveCSS("display", "none");
-  await expect(page.locator(".proposal-diff--editor code").first()).toHaveCSS(
+  await expect(page.locator(".proposal-diff")).toHaveCount(0);
+  const preview = page.getByRole("article", { name: "AI 最新脚本预览" });
+  await expect(preview).toHaveText(scriptProposalText);
+  await expect(preview).toHaveCSS(
     "font-family",
     /Noto Serif SC|Songti SC|Microsoft YaHei/,
   );
   const headerActions = page.locator(".script-editor-actions");
-  await expect(headerActions.getByRole("button", { name: "取消建议" })).toBeVisible();
-  await expect(headerActions.getByRole("button", { name: "确认并应用" })).toBeVisible();
+  await expect(headerActions.getByRole("button", { name: "取消", exact: true })).toBeVisible();
+  await expect(headerActions.getByRole("button", { name: "确认", exact: true })).toBeVisible();
 
-  await headerActions.getByRole("button", { name: "确认并应用" }).click();
+  await headerActions.getByRole("button", { name: "确认", exact: true }).click();
 
   const editor = page.getByRole("textbox", { name: "脚本内容" });
-  await expect(editor).toHaveValue(proposed);
+  await expect(editor).toHaveValue(scriptProposalText);
   await expect(page.locator(".script-editor-feedback")).toContainText("版本 7");
-  await expect(page.locator(".proposal-diff--editor")).toHaveCount(0);
+  await expect(preview).toHaveCount(0);
+});
+
+test("取消 AI 脚本最新版后恢复上一版正式内容", async ({ page }) => {
+  await mockPendingScriptProposal(page);
+  await page.route("**/api/v1/projects/**/proposals/proposal-script-review/reject", async (route) => {
+    expect(route.request().postDataJSON()).toMatchObject({
+      expectedProposalRevision: 1,
+      expectedTargetRevision: 6,
+    });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...scriptProposal,
+        status: "rejected",
+        revision: 2,
+        resolvedAt: "2026-09-26T08:01:00.000Z",
+      }),
+    });
+  });
+
+  await page.goto("/?fixture=ready");
+  await expect(page.getByRole("article", { name: "AI 最新脚本预览" })).toHaveText(scriptProposalText);
+  await page.locator(".script-editor-actions").getByRole("button", { name: "取消", exact: true }).click();
+
+  await expect(page.getByRole("article", { name: "AI 最新脚本预览" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "脚本内容" })).toHaveValue(scriptBeforeProposal);
 });
 
 test("W2-D：切换分镜创建独立会话，返回时恢复原绑定", async ({ page }) => {

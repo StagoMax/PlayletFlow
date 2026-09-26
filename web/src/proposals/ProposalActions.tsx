@@ -106,10 +106,10 @@ export function ProposalActions({
       {message ? <p className="proposal-actions__message" role="status">{message}</p> : null}
       <div className="proposal-actions__buttons">
         <button type="button" onClick={() => void reject()} disabled={!canReject || busy}>
-          {operation === "rejecting" ? "取消中…" : "取消建议"}
+          {operation === "rejecting" ? "取消中…" : layout === "toolbar" ? "取消" : "取消建议"}
         </button>
         <button type="button" className="is-primary" onClick={() => void apply()} disabled={!canApply || busy}>
-          {operation === "applying" ? "确认中…" : "确认并应用"}
+          {operation === "applying" ? "确认中…" : layout === "toolbar" ? "确认" : "确认并应用"}
         </button>
       </div>
     </div>

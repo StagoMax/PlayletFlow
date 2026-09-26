@@ -5,22 +5,19 @@ import "./proposals.css";
 type ProposalDiffProps = {
   beforeValue: string;
   proposedValue: string;
-  variant?: "panel" | "editor";
 };
 
-export function ProposalDiff({ beforeValue, proposedValue, variant = "panel" }: ProposalDiffProps) {
+export function ProposalDiff({ beforeValue, proposedValue }: ProposalDiffProps) {
   const lines = useMemo(() => buildLineDiff(beforeValue, proposedValue), [beforeValue, proposedValue]);
   const changed = lines.some((line) => line.kind !== "unchanged");
 
   return (
-    <section className={`proposal-diff proposal-diff--${variant}`} aria-label="正式内容与 AI 建议的差异">
-      {variant === "panel" ? (
-        <header>
-          <strong>变更差异</strong>
-          <span><i className="proposal-diff__legend proposal-diff__legend--removed" />正式内容</span>
-          <span><i className="proposal-diff__legend proposal-diff__legend--added" />AI 建议</span>
-        </header>
-      ) : null}
+    <section className="proposal-diff" aria-label="正式内容与 AI 建议的差异">
+      <header>
+        <strong>变更差异</strong>
+        <span><i className="proposal-diff__legend proposal-diff__legend--removed" />正式内容</span>
+        <span><i className="proposal-diff__legend proposal-diff__legend--added" />AI 建议</span>
+      </header>
       {!changed ? <p className="proposal-diff__empty">建议内容与当前内容没有可见差异。</p> : (
         <ol className="proposal-diff__lines">
           {lines.map((line, index) => (

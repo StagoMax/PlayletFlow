@@ -20,7 +20,7 @@ type ScriptEditorProps = {
   onSave: (text: string, expectedRevision: number) => Promise<StoryboardScript>;
   review?: (state: { dirty: boolean; revision: number }) => {
     actions: ReactNode;
-    content: ReactNode;
+    text: string;
   } | null;
 };
 
@@ -35,6 +35,9 @@ export function ScriptEditor({ storyboard, onSave, review }: ScriptEditorProps) 
   const characterCount = useMemo(() => Array.from(draft).length, [draft]);
   const dirty = draft !== savedText;
   const reviewState = review?.({ dirty, revision }) ?? null;
+  const visibleCharacterCount = reviewState
+    ? Array.from(reviewState.text).length
+    : characterCount;
 
   useEffect(() => {
     const next = storyboard.script;
@@ -135,7 +138,13 @@ export function ScriptEditor({ storyboard, onSave, review }: ScriptEditorProps) 
       ) : null}
 
       {reviewState ? (
-        <div className="script-editor-body script-editor-diff">{reviewState.content}</div>
+        <article
+          className="script-editor-body script-editor-preview"
+          aria-label="AI 最新脚本预览"
+          tabIndex={0}
+        >
+          {reviewState.text}
+        </article>
       ) : (
         <div className="script-editor-body">
           <label htmlFor="storyboard-script">脚本内容</label>
@@ -161,8 +170,8 @@ export function ScriptEditor({ storyboard, onSave, review }: ScriptEditorProps) 
         <div id="script-editor-feedback" className={`script-editor-feedback${error ? " error" : ""}`}>
           {error ?? `版本 ${revision} · Ctrl / ⌘ + S 快速保存`}
         </div>
-        <div id="script-editor-hint" className={characterCount > MAX_SCRIPT_CHARS ? "over-limit" : ""}>
-          {characterCount.toLocaleString("zh-CN")} / {MAX_SCRIPT_CHARS.toLocaleString("zh-CN")} 字符
+        <div id="script-editor-hint" className={visibleCharacterCount > MAX_SCRIPT_CHARS ? "over-limit" : ""}>
+          {visibleCharacterCount.toLocaleString("zh-CN")} / {MAX_SCRIPT_CHARS.toLocaleString("zh-CN")} 字符
         </div>
       </footer>
     </form>

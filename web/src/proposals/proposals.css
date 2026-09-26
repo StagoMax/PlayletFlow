@@ -60,13 +60,3 @@
 .proposal-generation--failed { border-color: #87443e; background: #3b211f; color: #f2aaa4; }
 @media (max-width: 620px) { .proposal-panel__meta { grid-template-columns: 1fr; } .proposal-panel__header { align-items: flex-start; flex-direction: column; } .proposal-actions__buttons { flex-direction: column-reverse; } .proposal-actions button { width: 100%; } }
 @media (prefers-reduced-motion: reduce) { .proposal-badge--applying { animation: none; } }
-
-.proposal-diff--editor { width: 100%; overflow: visible; border: 0; border-radius: 0; background: transparent; }
-.proposal-diff--editor .proposal-diff__lines { max-height: none; overflow: visible; color: inherit; font: inherit; }
-.proposal-diff--editor .proposal-diff__line { display: block; min-height: 1.95em; margin: 0 -.55em; padding: .06em .55em; border-radius: 3px; line-height: inherit; }
-.proposal-diff--editor .proposal-diff__line--removed { background: rgb(126 48 61 / 27%); }
-.proposal-diff--editor .proposal-diff__line--added { background: rgb(28 111 72 / 25%); }
-.proposal-diff--editor .proposal-diff__marker,
-.proposal-diff--editor .proposal-diff__number { display: none; }
-.proposal-diff--editor .proposal-diff__line code { display: block; border: 0; padding: 0; color: inherit; font: inherit; line-height: inherit; white-space: pre-wrap; }
-.proposal-diff--editor .proposal-diff__empty { padding: 0; color: var(--text-muted); text-align: left; }
