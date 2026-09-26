@@ -4,7 +4,7 @@
 
 ### 面向短剧创作的 AI 原生工作流
 
-把剧本、分镜、角色资产、图片/视频生成和 AI 协作放进一个可审阅、可追踪的制作空间。
+把剧本、片段、角色资产、图片/视频生成和 AI 协作放进一个可审阅、可追踪的制作空间。
 
 [![Rust](https://img.shields.io/badge/Rust-Axum-000000?logo=rust&logoColor=white)](server)
 [![React](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)](web)
@@ -26,11 +26,11 @@
 ```text
 灵感 / 剧本
     ↓
-分镜工作区 ──→ 角色、场景、道具资产复用
+片段工作区 ──→ 角色、场景、道具资产复用
     ↓
 AI 提案 ─────→ 用户确认 / 取消 / 冲突保护
     ↓
-图片与视频生成 ─→ 结果归档到对应分镜
+图片与视频生成 ─→ 结果归档到对应片段
     ↓
 可继续编辑、审阅和迭代的制作上下文
 ```
@@ -42,20 +42,20 @@ AI 提案 ─────→ 用户确认 / 取消 / 冲突保护
 
 | 能力 | 说明 |
 | --- | --- |
-| 🧭 分镜工作区 | 用递归资源树组织脚本、图片、视频和自定义对象，支持大量分镜快速定位 |
+| 🧭 片段工作区 | 用递归资源树组织脚本、图片、视频和自定义对象，支持大量片段快速定位 |
 | 🤖 AI 协作会话 | 基于 OpenTopia AgentRuntime 的流式对话、工具调用、事件时间线与会话恢复 |
 | 📝 可审阅提案 | AI 修改绑定到明确目标和版本，支持确认、取消、冲突检测与幂等处理 |
-| 🎭 资产复用 | 角色、场景、道具等资产跨分镜共享引用，不重复复制原始文件 |
+| 🎭 资产复用 | 角色、场景、道具等资产跨片段共享引用，不重复复制原始文件 |
 | 🖼️ 媒体预览 | 缩略图、悬停预览、完整画面查看、元数据和生成状态统一呈现 |
 | 🎞️ 图片/视频生成 | 接入 Seedream 与 Seedance，支持模型、比例、首尾帧和参考关键帧 |
-| 💾 本地优先 | SQLite 持久化项目、分镜、资产、提案、生成任务、会话和事件 |
+| 💾 本地优先 | SQLite 持久化项目、片段、资产、提案、生成任务、会话和事件 |
 | 📐 契约驱动 | OpenAPI 是产品接口的单一事实来源，前端类型由契约生成并在构建时校验 |
 
 ## 🧩 工作流
 
 ```mermaid
 flowchart LR
-    U[创作者] --> W[分镜工作区]
+    U[创作者] --> W[片段工作区]
     W --> S[脚本与资产]
     W --> C[AI 会话]
     C --> A[OpenTopia AgentRuntime]
@@ -85,12 +85,14 @@ cd PlayletFlow
 
 ### 2. 启动后端
 
-第一次体验可以使用固定回复的本地 Fixture，无需任何 API Key：
+第一次体验可以使用固定回复的本地 Fixture，无需任何 API Key；片段示例数据不会自动写入：
 
 ```bash
 cd server
 cargo run -- --fixture
 ```
+
+如需恢复演示用的固定片段数据，可显式运行 `cargo run -- --fixture --seed-demo-workspace`，并在前端访问 `/?fixture=ready`。
 
 服务启动后可访问健康检查：<http://127.0.0.1:8788/health>。
 
@@ -117,6 +119,14 @@ cd server
 $env:PLAYLETFLOW_LLM_API_KEY = Read-Host -MaskInput "DeepSeek API Key"
 cargo run
 ```
+
+如果项目根目录已有本地 `deepseekAPI.txt`（内容为 `API_KEY=...`），可在根目录直接运行：
+
+```powershell
+.\scripts\run-with-deepseek-key.ps1
+```
+
+脚本只会在后端进程运行期间注入 `PLAYLETFLOW_LLM_API_KEY`；`deepseekAPI.txt` 已被 Git 和 Vercel 忽略。
 
 macOS / Linux：
 
@@ -180,7 +190,7 @@ flowchart TB
 
 - **领域规则留在服务端**：前端负责交互，不复制状态机和权限判断。
 - **AI 只能提出建议**：工具调用生成提案，不能直接篡改正式脚本或媒体目标。
-- **上下文绑定而非模型自选**：项目、分镜和资源范围由会话绑定关系决定。
+- **上下文绑定而非模型自选**：项目、片段和资源范围由会话绑定关系决定。
 - **持久事件与实时事件同源**：刷新、断线重连和实时流使用同一事件投影。
 - **外部调用可恢复**：幂等键、版本检查和生成任务状态机避免重复消费。
 
@@ -199,7 +209,7 @@ PlayletFlow/
 │     ├─ conversation.rs       # 会话与事件持久化
 │     └─ runtime.rs            # OpenTopia Runtime 组合
 ├─ web/                        # React / TypeScript 前端
-│  ├─ src/workspace/           # 分镜工作区
+│  ├─ src/workspace/           # 片段工作区
 │  ├─ src/chat/                # 流式对话与活动时间线
 │  ├─ src/assets/              # 资产库
 │  ├─ src/proposals/           # AI 提案审阅
@@ -274,7 +284,7 @@ OpenTopia Desktop 的 Provider 配置。在 Windows 上也可以通过已安装�
 
 ## 🗺️ 路线图
 
-- [x] 分镜、脚本、资产与媒体工作区
+- [x] 片段、脚本、资产与媒体工作区
 - [x] AI 会话、工具调用和持久事件流
 - [x] 可确认/取消的 AI 变更提案
 - [x] Seedream / Seedance 图片与视频生成

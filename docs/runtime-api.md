@@ -55,9 +55,12 @@ project-scoped tools through `ToolRegistry`. The server must derive tool scope
 from authenticated project membership, not from model arguments. Do not add
 story workflow routes or prompts to `server/src/runtime.rs`.
 
-The local composition registers `propose_script_change` and
-`propose_media_prompt_change`. Both read the Runtime-owned `threadId` and
-`turnId`, resolve `workspace_thread_bindings`, and pass that trusted scope to
-`ProposalService`; neither schema accepts `projectId` or `storyboardId`.
-Successful execution means only that a pending proposal was persisted. Formal
-content still changes exclusively through the user-confirmation API.
+The local composition registers five storyboard tools: `search_storyboard_assets`,
+`read_storyboard_asset`, `propose_text_patch`, `propose_image_prompt_change`, and
+`propose_video_prompt_change`. The runtime registry is otherwise empty. Product
+tools resolve the Runtime-owned `threadId` through `workspace_thread_bindings`;
+the three edit tools also use `turnId` for proposal provenance. No tool schema
+accepts `projectId` or `storyboardId`. Edit success means only that a pending
+proposal was saved; formal content changes through the user-confirmation API.
+The stateless cloud `/api/turn` route has no persistent storyboard-thread binding
+and therefore does not register these product tools.

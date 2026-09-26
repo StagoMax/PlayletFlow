@@ -193,6 +193,22 @@
         }
       }
     },
+    "/projects/{projectId}/storyboards/{storyboardId}/duplicate": {
+      "parameters": [
+        { "$ref": "#/components/parameters/ProjectId" },
+        { "$ref": "#/components/parameters/StoryboardId" },
+        { "$ref": "#/components/parameters/IdempotencyKey" }
+      ],
+      "post": {
+        "operationId": "duplicateStoryboard",
+        "tags": ["Storyboards"],
+        "description": "Creates a new storyboard immediately after the source. Copies the script, storyboard-owned media records, asset sections and bindings, and workspace nodes. Stored media objects and project assets remain shared; conversations, proposals, and generation jobs are not copied.",
+        "responses": {
+          "201": { "$ref": "#/components/responses/Storyboard" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/projects/{projectId}/storyboards/{storyboardId}/script": {
       "parameters": [
         { "$ref": "#/components/parameters/ProjectId" },
@@ -269,6 +285,73 @@
         },
         "responses": {
           "200": { "$ref": "#/components/responses/WorkspaceNode" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteWorkspaceNode",
+        "tags": ["Workspace"],
+        "parameters": [
+          { "name": "expectedRevision", "in": "query", "required": true, "schema": { "type": "integer", "minimum": 1 } }
+        ],
+        "responses": {
+          "204": { "description": "Workspace node and its descendants deleted" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/copies": {
+      "parameters": [
+        { "$ref": "#/components/parameters/ProjectId" },
+        { "$ref": "#/components/parameters/StoryboardId" },
+        { "$ref": "#/components/parameters/WorkspaceNodeId" }
+      ],
+      "post": {
+        "operationId": "copyWorkspaceNode",
+        "tags": ["Workspace"],
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": {
+          "201": { "$ref": "#/components/responses/WorkspaceNode" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/media": {
+      "parameters": [
+        { "$ref": "#/components/parameters/ProjectId" },
+        { "$ref": "#/components/parameters/StoryboardId" },
+        { "$ref": "#/components/parameters/WorkspaceNodeId" }
+      ],
+      "post": {
+        "operationId": "ensureWorkspaceObjectMedia",
+        "tags": ["Workspace", "Media"],
+        "description": "Creates or returns the storyboard-owned media placeholder for an image or video workspace object. Repeated calls return the same media item.",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Media" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "operationId": "uploadWorkspaceObjectMedia",
+        "tags": ["Workspace", "Media"],
+        "description": "Stores JPEG, PNG, WebP, MP4 or MOV bytes in local media storage and replaces the object's current preview. Maximum body size: 100 MB.",
+        "parameters": [
+          { "name": "width", "in": "query", "required": true, "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "height", "in": "query", "required": true, "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "durationMs", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/jpeg": { "schema": { "type": "string", "format": "binary" } },
+            "image/png": { "schema": { "type": "string", "format": "binary" } },
+            "image/webp": { "schema": { "type": "string", "format": "binary" } },
+            "video/mp4": { "schema": { "type": "string", "format": "binary" } },
+            "video/quicktime": { "schema": { "type": "string", "format": "binary" } }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Media" },
           "default": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -1599,6 +1682,12 @@
           "baseRevision": { "type": "integer", "minimum": 1 },
           "beforeValue": { "type": "string" },
           "proposedValue": { "type": "string" },
+          "proposedInput": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/GenerationInputSelection" },
+              { "type": "null" }
+            ]
+          },
           "summary": { "type": "string" },
           "status": { "$ref": "#/components/schemas/ProposalStatus" },
           "source": { "$ref": "#/components/schemas/ProposalSource" },

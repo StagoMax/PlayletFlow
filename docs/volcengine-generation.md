@@ -29,13 +29,13 @@ ARK_API_KEY=...
 ## 当前生成策略
 
 - `GET /api/v1/generation-models` 返回服务端批准的模型和能力，前端不允许提交任意模型字符串。
-- 默认图片模型为 Seedream 5.0 Pro，默认视频模型为 Seedance 2.5；用户可在确认提案或直接生成前改选模型。
+- 图片固定使用 Seedream 5.0 Lite，视频固定使用 Seedance 2.0 Mini；界面仅显示模型名称，不提供模型切换。
 - Seedream 支持纯提示词或多张参考图。默认单图、2K、关闭组图。
-- Seedance 支持纯提示词、严格首/尾帧、参考关键帧三种模式。严格首尾帧自动使用 `adaptive` 画幅；参考关键帧按 `reference_image` 发送。
+- Seedance 的图片输入有两类互斥模式：严格首帧/首尾帧（`first_frame`/`last_frame`）与参考图（`reference_image`）。无图片输入时为纯文本生成。严格帧模式自动使用 `adaptive` 画幅。
 - 方舟规定严格首/尾帧模式与参考图模式互斥，应用层会在创建任务前校验，不能混发。
-- 视频默认 `720p`、`16:9`、5 秒、无音频；模型、分辨率、画幅、时长和音频选择都会写入不可变任务快照。
+- 当前产品默认 `480p`、`16:9`、4 秒、无音频；Seedance 2.0 Mini 的分辨率只开放 `480p` 与 `720p`。模型、分辨率、画幅、时长和音频选择都会写入不可变任务快照。
 - `mediaPrompt` 按目标媒体的 `kind` 选择图片或视频模型。
-- `assetBindingPrompt` 生成分镜私有派生图片，并在成功事务中更新 `derived_media_id`。
+- `assetBindingPrompt` 生成片段私有派生图片，并在成功事务中更新 `derived_media_id`。
 
 输入快照只保存媒体 ID，不保存会过期的 URL。worker 提交任务前通过 `GenerationInputResolver` 取得对象存储的短期 HTTPS 签名地址。这样重试时可重新签名，同时不会接受用户提交的任意 URL，避免 SSRF 和跨项目素材引用。
 

@@ -4,7 +4,7 @@
 版本：1.0  
 基础路径：`/api/v1`
 
-本文档定义分镜工作区的产品接口。当前已经实现的通用 AgentRuntime 接口见 [runtime-api.md](./runtime-api.md)。产品路由不得写入 `server/src/runtime.rs`；运行时只在组合层注册产品工具和注入可信上下文。
+本文档定义片段工作区的产品接口。当前已经实现的通用 AgentRuntime 接口见 [runtime-api.md](./runtime-api.md)。产品路由不得写入 `server/src/runtime.rs`；运行时只在组合层注册产品工具和注入可信上下文。
 
 ## 1. 通用约定
 
@@ -56,8 +56,8 @@
 | 403 | `PROJECT_ACCESS_DENIED` | 无项目访问权或资源不在当前作用域。 |
 | 404 | `RESOURCE_NOT_FOUND` | 资源不存在或无权知道其存在。 |
 | 409 | `REVISION_CONFLICT` | 修订冲突。 |
-| 409 | `ASSET_IN_USE` | 共享资产仍被分镜引用。 |
-| 409 | `DUPLICATE_BINDING` | 目标分镜已经引用同一资产。 |
+| 409 | `ASSET_IN_USE` | 共享资产仍被片段引用。 |
+| 409 | `DUPLICATE_BINDING` | 目标片段已经引用同一资产。 |
 | 409 | `PROPOSAL_NOT_PENDING` | 提案已处理，不能再次确认。 |
 | 422 | `VALIDATION_FAILED` | 业务字段校验失败。 |
 | 429 | `RATE_LIMITED` | 请求过多。 |
@@ -116,7 +116,7 @@ type StoryboardScript = {
 };
 ```
 
-`index` 是本次响应中的派生值，不参与写操作。菜单定位使用服务端返回的 `anchorIndex`，避免客户端先加载全部分镜。
+`index` 是本次响应中的派生值，不参与写操作。菜单定位使用服务端返回的 `anchorIndex`，避免客户端先加载全部片段。
 
 ### 2.3 AssetSection
 
@@ -174,7 +174,7 @@ type AssetBinding = {
 };
 ```
 
-唯一约束为 `(storyboardId, assetId)`。同一资产在同一分镜只出现一次，可移动到其他分区。若未来需要同一资产的多个镜头用途，应新增“用法实例”概念，而不是放开此约束造成重复项歧义。
+唯一约束为 `(storyboardId, assetId)`。同一资产在同一片段只出现一次，可移动到其他分区。若未来需要同一资产的多个镜头用途，应新增“用法实例”概念，而不是放开此约束造成重复项歧义。
 
 ### 2.5 MediaItem
 
@@ -249,18 +249,18 @@ type ChangeProposal = {
 };
 ```
 
-## 3. 项目和分镜接口
+## 3. 项目和片段接口
 
 ### 3.1 项目
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `GET` | `/projects` | 列出可访问项目。 |
-| `POST` | `/projects` | 创建项目和第一个空白分镜。 |
+| `POST` | `/projects` | 创建项目和第一个空白片段。 |
 | `GET` | `/projects/:projectId` | 获取项目。 |
 | `PATCH` | `/projects/:projectId` | 修改名称等元数据。 |
 
-### 3.2 获取分镜菜单窗口
+### 3.2 获取片段菜单窗口
 
 `GET /projects/:projectId/storyboards?anchorId=:currentId&before=25&after=25`
 
@@ -270,7 +270,7 @@ type ChangeProposal = {
     {
       "id": "3f...",
       "projectId": "91...",
-      "name": "分镜 137",
+      "name": "片段 137",
       "position": "p137",
       "index": 136,
       "revision": 4,
@@ -293,22 +293,22 @@ type ChangeProposal = {
 
 省略 `anchorId` 时从头分页。锚点不存在返回 404。客户端打开菜单后使用 `anchorIndex` 或锚点元素执行居中滚动。
 
-### 3.3 分镜命令
+### 3.3 片段命令
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `POST` | `/projects/:projectId/storyboards` | 新建分镜。 |
+| `POST` | `/projects/:projectId/storyboards` | 新建片段。 |
 | `GET` | `/projects/:projectId/storyboards/:storyboardId` | 工作区基本信息。 |
 | `PATCH` | `/projects/:projectId/storyboards/:storyboardId` | 重命名。 |
-| `POST` | `/projects/:projectId/storyboards/:storyboardId/reorder` | 移到另一分镜前/后。 |
-| `DELETE` | `/projects/:projectId/storyboards/:storyboardId` | 软删除分镜。 |
-| `POST` | `/projects/:projectId/storyboards/:storyboardId/restore` | 恢复分镜。 |
+| `POST` | `/projects/:projectId/storyboards/:storyboardId/reorder` | 移到另一片段前/后。 |
+| `DELETE` | `/projects/:projectId/storyboards/:storyboardId` | 软删除片段。 |
+| `POST` | `/projects/:projectId/storyboards/:storyboardId/restore` | 恢复片段。 |
 
 创建请求：
 
 ```json
 {
-  "name": "分镜 12",
+  "name": "片段 12",
   "insertAfterId": "current-storyboard-id",
   "reuseAssetsFrom": {
     "storyboardId": "source-storyboard-id",
@@ -318,7 +318,7 @@ type ChangeProposal = {
 }
 ```
 
-`reuseAssetsFrom` 省略表示空白分镜。服务端在同一事务中创建分区映射和目标引用，响应额外包含复制报告：
+`reuseAssetsFrom` 省略表示空白片段。服务端在同一事务中创建分区映射和目标引用，响应额外包含复制报告：
 
 ```json
 {
@@ -401,15 +401,15 @@ type ChangeProposal = {
 }
 ```
 
-### 4.3 分镜资产引用
+### 4.3 片段资产引用
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `GET` | `/projects/:projectId/storyboards/:storyboardId/asset-bindings` | 按分区返回引用。 |
 | `POST` | `/projects/:projectId/storyboards/:storyboardId/asset-bindings` | 添加一个或多个共享资产引用。 |
-| `PATCH` | `/projects/:projectId/storyboards/:storyboardId/asset-bindings/:bindingId` | 移动分区、排序或人工改分镜级提示词。 |
+| `PATCH` | `/projects/:projectId/storyboards/:storyboardId/asset-bindings/:bindingId` | 移动分区、排序或人工改片段级提示词。 |
 | `DELETE` | `/projects/:projectId/storyboards/:storyboardId/asset-bindings/:bindingId` | 解除引用。 |
-| `POST` | `/projects/:projectId/storyboards/:sourceId/asset-bindings:copy` | 向另一分镜复制引用。 |
+| `POST` | `/projects/:projectId/storyboards/:sourceId/asset-bindings:copy` | 向另一片段复制引用。 |
 
 批量添加：
 
@@ -449,7 +449,7 @@ type ChangeProposal = {
 
 接口禁止复制资产记录或对象存储文件。
 
-`includeSectionStructure=false` 时必须提供 `targetSectionId`；为 `true` 时必须传 `null`。复制和分区映射在同一事务内完成，目标分镜已有同一资产引用时按 `onDuplicate=skip` 返回，不产生重复引用。
+`includeSectionStructure=false` 时必须提供 `targetSectionId`；为 `true` 时必须传 `null`。复制和分区映射在同一事务内完成，目标片段已有同一资产引用时按 `onDuplicate=skip` 返回，不产生重复引用。
 
 ## 5. 媒体与生成接口
 
@@ -457,11 +457,11 @@ type ChangeProposal = {
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `GET` | `/projects/:projectId/storyboards/:storyboardId/media?role=keyframe,generatedVideo&cursor=` | 分镜媒体列表。 |
+| `GET` | `/projects/:projectId/storyboards/:storyboardId/media?role=keyframe,generatedVideo&cursor=` | 片段媒体列表。 |
 | `GET` | `/projects/:projectId/media/:mediaId` | 媒体详情。 |
 | `POST` | `/projects/:projectId/media/:mediaId/access` | 刷新短期预览 URL。 |
 | `PATCH` | `/projects/:projectId/media/:mediaId` | 人工修改名称或提示词。 |
-| `DELETE` | `/projects/:projectId/media/:mediaId` | 软删除分镜私有媒体。 |
+| `DELETE` | `/projects/:projectId/media/:mediaId` | 软删除片段私有媒体。 |
 
 媒体访问响应：
 
@@ -512,9 +512,9 @@ type ChangeProposal = {
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `GET` | `/projects/:projectId/storyboards/:storyboardId/ai-thread` | 获取当前分镜最近使用的线程绑定；尚未绑定时返回 `200 null`。 |
+| `GET` | `/projects/:projectId/storyboards/:storyboardId/ai-thread` | 获取当前片段最近使用的线程绑定；尚未绑定时返回 `200 null`。 |
 | `POST` | `/projects/:projectId/storyboards/:storyboardId/ai-thread` | 创建并绑定一个 AgentRuntime 线程。 |
-| `GET` | `/projects/:projectId/storyboards/:storyboardId/ai-threads` | 按创建时间倒序列出当前分镜的全部线程绑定，用于会话切换。 |
+| `GET` | `/projects/:projectId/storyboards/:storyboardId/ai-threads` | 按创建时间倒序列出当前片段的全部线程绑定，用于会话切换。 |
 
 ```ts
 type WorkspaceThreadBinding = {
@@ -588,91 +588,19 @@ type WorkspaceThreadBinding = {
 
 ## 7. AI 工具契约
 
-工具是产品应用服务的适配器，只创建提案。工具实现不得直接执行 SQL，不得直接修改 `Storyboard`、`AssetBinding` 或 `MediaItem`。
+本地片段会话只注册以下五个工具。全部操作从 Runtime 提供的 `threadId` 解析当前项目和片段；输入不接受 `projectId`、`storyboardId` 或服务器文件路径。检索与读取返回当前数据库快照，三个修改工具只创建待确认提案，正式内容仍由用户确认接口修改。
 
-### 7.1 `propose_script_change`
+| 工具 | 输入重点 | 结果 |
+| --- | --- | --- |
+| `search_storyboard_assets` | 可选 `query`、`kind`、`offset`、`limit` | 当前片段的文本、资产绑定、图片和视频摘要，含稳定 ID、状态和修订号；分页上限 100。 |
+| `read_storyboard_asset` | `kind`、`id` | 完整文本或提示词、状态、修订号、最近生成任务使用的图片输入。 |
+| `propose_text_patch` | `targetId`、`baseRevision`、`oldText`、`newText`、`summary` | 对当前片段脚本执行唯一匹配的精确替换，产生待确认提案。 |
+| `propose_image_prompt_change` | `targetType=media/assetBinding`、`targetId`、`baseRevision`、`proposedPrompt`、`input`、`summary` | 图片或片段资产绑定的提示词提案及参考图选择。 |
+| `propose_video_prompt_change` | `targetId`、`baseRevision`、`proposedPrompt`、`input`、`summary` | 视频提示词提案及图片输入选择。 |
 
-描述：为当前会话绑定的分镜提出脚本修改，等待用户确认。
+`input` 复用 `GenerationInputSelection`：`textOnly` 不传图片；图片工具可用 `referenceImages`；视频工具可用 `firstLastFrames` 或 `referenceImages`。前者含必选首帧与可选尾帧，后者含按顺序排列的参考图片 ID。两类图片模式互斥；服务端检查数量、就绪状态及片段可见性。首帧与尾帧允许选择同一图片。用户确认面板展示提案所选素材，并允许在提交确认前调整；任务使用确认时显示的选择。若确认接口未提供生成选项，服务端使用提案保存的 `input`。
 
-输入 JSON Schema：
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "proposedText": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 20000
-    },
-    "summary": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 300
-    }
-  },
-  "required": ["proposedText", "summary"],
-  "additionalProperties": false
-}
-```
-
-工具从可信上下文读取 `storyboardId`、当前脚本和修订号。输出：
-
-```json
-{
-  "proposalId": "proposal-id",
-  "status": "pending",
-  "targetType": "script",
-  "baseRevision": 7,
-  "message": "脚本修改已提交，等待用户确认。"
-}
-```
-
-### 7.2 `propose_media_prompt_change`
-
-描述：为当前分镜中可见的图片、视频或资产引用提出提示词修改。
-
-输入 JSON Schema：
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "targetType": {
-      "type": "string",
-      "enum": ["media", "assetBinding"]
-    },
-    "targetId": { "type": "string", "format": "uuid" },
-    "proposedPrompt": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 10000
-    },
-    "summary": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 300
-    }
-  },
-  "required": ["targetType", "targetId", "proposedPrompt", "summary"],
-  "additionalProperties": false
-}
-```
-
-服务端验证目标确实属于或被当前分镜引用。对共享资产的修改创建 `assetBinding` 级覆盖提案，不更新 `Asset.canonicalPrompt`。
-
-输出：
-
-```json
-{
-  "proposalId": "proposal-id",
-  "status": "pending",
-  "targetType": "assetBindingPrompt",
-  "targetId": "binding-id",
-  "baseRevision": 3,
-  "message": "提示词修改已提交，确认后才会应用并创建生成任务。"
-}
-```
+工具结果返回 `proposalId`、目标、`baseRevision`、`proposedInput` 和状态。共享资产媒体在检索结果中标为只读；修改它在当前片段的提示词时使用 `assetBinding` 覆盖提案，不更新全局媒体提示词。`read_storyboard_asset` 读取文本、提示词及元数据，不读取图片像素。普通空白文本节点只有导航记录，尚无文本内容存储，因此文本补丁仅支持已持久化的片段脚本。
 
 ## 8. 事件接口
 
@@ -710,26 +638,26 @@ type WorkspaceThreadBinding = {
 
 ### 9.1 打开工作区
 
-1. 读取项目和上次分镜 ID。
-2. 以该 ID 为 `anchorId` 获取分镜菜单窗口。
-3. 并行读取分镜详情、分区/引用、媒体、待确认提案和 AI 线程绑定。
+1. 读取项目和上次片段 ID。
+2. 以该 ID 为 `anchorId` 获取片段菜单窗口。
+3. 并行读取片段详情、分区/引用、媒体、待确认提案和 AI 线程绑定。
 4. 连接项目事件流和现有线程事件流。
 5. 媒体缩略图进入视口时再加载，选中或悬停时获取预览访问地址。
 
 ### 9.2 AI 修改提示词
 
 1. 用户在右侧发送消息。
-2. AgentRuntime 调用 `propose_media_prompt_change`。
-3. 工具验证线程绑定与目标，保存 `pending` 提案，返回提案 ID。
+2. AgentRuntime 使用 `search_storyboard_assets` 和 `read_storyboard_asset` 确认目标及可引用图片，再调用对应的图片或视频提示词工具。
+3. 工具验证线程绑定、目标修订及引用素材，保存含生成输入的 `pending` 提案，返回提案 ID。
 4. 项目事件流发出 `proposal.created`，左侧对应项出现黄色状态。
-5. 用户在详情区确认，客户端调用提案 `apply`。
+5. 用户在详情区检查提示词和引用素材，可调整生成选项，然后调用提案 `apply`。
 6. 服务端原子更新提示词、提案和生成 outbox，返回任务 ID。
-7. 后台生成适配器处理任务，项目事件流更新进度，成功后替换该分镜的派生媒体。
+7. 后台生成适配器处理任务，项目事件流更新进度，成功后替换该片段的派生媒体。
 
 ## 10. 兼容与演进规则
 
 - 第一阶段只新增 `/api/v1` 产品接口，不破坏当前 `/api/threads` 契约。
 - 可选字段可以向后兼容地增加；删除字段、改变含义或收紧枚举需要新 API 版本。
-- 工具名称和必填字段视为模型契约；变更时保留旧工具一段迁移期。
+- 工具名称和必填字段视为模型契约。本次将旧脚本/媒体提案工具替换为五个定向工具，既有历史工具事件仍可读取，新的模型回合只暴露新工具。
 - TypeScript 类型应从一份机器可读契约生成或由契约测试校验，不能在前后端各自手写后长期漂移。
 - 本文档是语义说明；[openapi.json](./openapi.json) 是机器可读的 OpenAPI 3.1 契约，并由前端构建执行生成文件漂移检查。
