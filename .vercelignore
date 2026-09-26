@@ -1,12 +1,9 @@
-.env
-.env.*
-!.env.example
-.videoflow/
+.git/
 .local/
+.videoflow/
+.vercel/
+.env*
 server/target/
 web/node_modules/
 web/dist/
 *.log
-
-.vercel
-.env*

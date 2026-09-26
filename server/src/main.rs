@@ -1,6 +1,8 @@
 mod api;
+mod cloud;
 mod conversation;
 mod history;
+mod rate_limit;
 mod runtime;
 
 use anyhow::Result;
@@ -16,24 +18,37 @@ async fn main() -> Result<()> {
     if args.iter().any(|arg| arg == "--smoke") {
         return smoke().await;
     }
-    let database = std::env::var("VIDEOFLOW_DB")
-        .unwrap_or_else(|_| ".videoflow/conversations.sqlite".to_owned());
-    let store = Arc::new(SqliteSessionStore::open(database)?);
     let provider: Arc<dyn ModelProvider> = if args.iter().any(|arg| arg == "--fixture") {
         println!("Using the local fixture provider; responses are not from a remote model");
         Arc::new(MockProvider)
     } else {
         runtime::configured_provider().await?
     };
-    let service = conversation::ConversationService::new(
-        store,
-        provider,
-        runtime::default_registry(),
-        std::env::current_dir()?,
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8788").await?;
-    println!("Videoflow runtime API listening on http://127.0.0.1:8788");
-    axum::serve(listener, api::router(service)).await?;
+    if std::env::var("VIDEOFLOW_CLOUD").as_deref() == Ok("1") {
+        let state = cloud::CloudState {
+            provider,
+            tools: runtime::default_registry(),
+            workspace: std::env::current_dir()?,
+            rate_limit: Arc::new(rate_limit::RateLimiter::default()),
+        };
+        let port = std::env::var("PORT").ok().and_then(|port| port.parse::<u16>().ok()).unwrap_or(80);
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).await?;
+        println!("Videoflow cloud API listening on port {port}");
+        axum::serve(listener, cloud::router(state)).await?;
+    } else {
+        let database = std::env::var("VIDEOFLOW_DB")
+            .unwrap_or_else(|_| ".videoflow/conversations.sqlite".to_owned());
+        let store = Arc::new(SqliteSessionStore::open(database)?);
+        let service = conversation::ConversationService::new(
+            store,
+            provider,
+            runtime::default_registry(),
+            std::env::current_dir()?,
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:8788").await?;
+        println!("Videoflow runtime API listening on http://127.0.0.1:8788");
+        axum::serve(listener, api::router(service)).await?;
+    }
     Ok(())
 }
 

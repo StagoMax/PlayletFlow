@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, cloudMode } from "./api";
 import type { AgentEvent, Message } from "./types";
 
 const initialMessageCount = 60;
@@ -60,6 +60,7 @@ export class ConversationStore {
         loading: false,
       });
       const since = events.at(-1)?.seq ?? 0;
+      if (cloudMode) return;
       const stream = new EventSource(`/api/threads/${this.threadId}/events/stream?since=${since}`);
       this.stream = stream;
       for (const type of streamedEventTypes) {
@@ -121,6 +122,18 @@ export class ConversationStore {
     if (this.state.sending) return;
     this.publish({ sending: true, error: null });
     try {
+      if (cloudMode) {
+        const message: Message = {
+          id: crypto.randomUUID(), threadId: this.threadId, role: "user",
+          parts: [{ type: "text", text: content }], createdAt: new Date().toISOString(),
+        };
+        this.publish({ messages: [...this.state.messages, message] });
+        const events = await api.turn(this.threadId, message);
+        for (const event of events) this.receive(event);
+        this.flush();
+        this.publish({ sending: false });
+        return;
+      }
       const { message } = await api.send(this.threadId, content);
       if (!this.state.messages.some((item) => item.id === message.id)) {
         this.publish({ messages: [...this.state.messages, message], sending: false });

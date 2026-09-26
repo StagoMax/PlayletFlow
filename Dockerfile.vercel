@@ -1,0 +1,14 @@
+FROM rust:1.97-bookworm AS builder
+WORKDIR /app
+COPY server/Cargo.toml server/Cargo.lock server/
+COPY server/src server/src
+RUN cargo build --manifest-path server/Cargo.toml --release --locked
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/server/target/release/videoflow-runtime-server /usr/local/bin/videoflow-server
+ENV VIDEOFLOW_CLOUD=1
+ENV PORT=80
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/videoflow-server"]

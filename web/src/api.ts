@@ -1,4 +1,7 @@
 import type { AgentEvent, Message, Thread, ToolResult } from "./types";
+import { cloudApi } from "./cloudApi";
+
+export const cloudMode = import.meta.env.PROD;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -13,7 +16,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export const api = {
+const localApi = {
   threads: () => request<Thread[]>("/api/threads"),
   createThread: (title = "新会话") =>
     request<Thread>("/api/threads", {
@@ -44,3 +47,5 @@ export const api = {
   toolResult: (threadId: string, eventId: string) =>
     request<ToolResult>(`/api/threads/${threadId}/events/${eventId}/tool-result`),
 };
+
+export const api = { ...localApi, ...(cloudMode ? cloudApi : {}), turn: cloudApi.turn };

@@ -76,7 +76,7 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <p className="sidebar-note">模型与工具在服务端运行。此页面用于验证 Runtime 闭环。</p>
+        <p className="sidebar-note">模型与工具在服务端运行。公开体验的会话保存在当前浏览器，刷新后可继续。</p>
       </aside>
       <main className="main-panel">
         {error && <div role="alert" className="global-error">{error}</div>}

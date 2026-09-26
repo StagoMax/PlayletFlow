@@ -39,9 +39,33 @@ checkout. For example, from this repository:
 Omit `--smoke` to start the API. This bridge is for the local development
 machine only; a deployed service needs its own server-side secret management.
 
-The server deliberately binds to loopback. Before public deployment, a hosting
-adapter must supply user authentication and project authorization; the browser
-must never receive provider keys. See [the API handoff](docs/runtime-api.md).
+The local server binds to loopback. The Vercel adapter uses a separate stateless
+turn API; the browser never receives provider keys. See
+[the API handoff](docs/runtime-api.md).
+
+## Deploy to Vercel
+
+`vercel.json` deploys the Vite frontend and a Rust container service on one
+domain. The container runs OpenTopia `AgentCore` and `AgentTurnDriver` for each
+request. It does not depend on a persistent server process or local SQLite.
+
+1. Log in with `vercel login`, then run `vercel link` from the repository root.
+2. Add production environment variables to the Vercel project:
+   `OPENTOPIA_OPENAI_BASE_URL`, `OPENTOPIA_MODEL`, and `OPENTOPIA_API_KEY`.
+   Keep the API key in Vercel's server-side environment settings, never in a
+   `VITE_` variable or Git.
+3. Run `vercel deploy --prod` from the repository root.
+4. Verify `/health`, then send a message and ask the model to call
+   `runtime_probe` in the deployed page.
+
+The public demo saves each visitor's threads and event history in that
+browser's local storage. Refresh works; cross-device sync and account recovery
+need a database in a later iteration. The API accepts at most 2,000 characters
+and 40 messages of history per turn. It has a small per-instance rate limiter;
+configure a Vercel Firewall rate rule and a model-provider spending cap for a
+long-running public deployment. The response currently arrives after the
+model turn completes, while the page shows a working state. Local development
+still uses SQLite and SSE.
 
 ## Boundaries
 
@@ -58,8 +82,8 @@ must never receive provider keys. See [the API handoff](docs/runtime-api.md).
 
 ## Current boundaries
 
-The tool registry contains only `runtime_probe`. Multi-user authentication,
-approval resume, cancellation, model settings UI, media generation, and public
-deployment are not implemented. Prior user/assistant text is included in each
-new turn along with structured tool calls and results. Long conversations still
-need context budgeting and compaction before production use.
+The tool registry contains only `runtime_probe`. Account-based sync, approval
+resume, cancellation, model settings UI, and media generation are not
+implemented. Prior user/assistant text is included in each new turn along with
+structured tool calls and results. Long conversations still need context
+budgeting and compaction before production use.
