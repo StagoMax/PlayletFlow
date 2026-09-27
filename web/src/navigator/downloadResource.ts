@@ -33,7 +33,12 @@ export async function downloadResource(
     ? await workspaceObjectMediaClient.get(projectId, media.id)
     : media;
   const access = await currentAccess(current, projectId);
-  const response = await fetch(access.url);
+  let response: Response;
+  try {
+    response = await fetch(access.url);
+  } catch {
+    throw new Error("无法获取资源文件，请检查网络或存储访问设置后重试。");
+  }
   if (!response.ok) throw new Error(`下载失败（HTTP ${response.status}），请重试。`);
   const blob = await response.blob();
   if (blob.size === 0) throw new Error("资源文件为空，无法下载。");
@@ -67,7 +72,8 @@ function filename(name: string, extension: string): string {
   const base = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
     .replace(/\.(avif|gif|jpe?g|png|svg|webp|mp4|mov|webm|txt)$/i, "")
     .replace(/[. ]+$/g, "").trim() || "资源";
-  return `${base}.${extension}`;
+  const safeBase = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(base) ? `_${base}` : base;
+  return `${safeBase}.${extension}`;
 }
 
 function saveBlob(blob: Blob, name: string): void {

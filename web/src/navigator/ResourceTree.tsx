@@ -293,8 +293,9 @@ export function ResourceTree(props: ResourceTreeProps) {
                 && contextTarget.node.selection.kind !== "script"
                 && (contextMedia?.status !== "ready" || !contextMedia.preview?.url)}
               onClick={() => {
-                if (action === "download" && contextTarget.node.kind === "object") props.onDownloadRequest(contextTarget.node, contextMedia);
-                else if (contextTarget.root) props.onRootActionRequest(action);
+                if (action === "download") {
+                  if (contextTarget.node.kind === "object") props.onDownloadRequest(contextTarget.node, contextMedia);
+                } else if (contextTarget.root) props.onRootActionRequest(action);
                 else props.onActionRequest(contextTarget.node, action);
                 setContextTarget(null);
               }}>
