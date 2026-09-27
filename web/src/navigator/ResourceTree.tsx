@@ -4,7 +4,7 @@ import { mediaStatusLabel } from "../preview/formatMedia";
 import { MediaThumbnail } from "../preview/MediaThumbnail";
 import { Icon } from "../workspace/Icons";
 import { folderChain, selectionMatches } from "../workspace/resourceTree";
-import type { NavigatorItem, WorkspaceObjectType, WorkspaceSelection, WorkspaceTreeNode } from "../workspace/types";
+import type { NavigatorItem, WorkspaceObjectNode, WorkspaceObjectType, WorkspaceSelection, WorkspaceTreeNode } from "../workspace/types";
 import type { MediaItem } from "../productApi/generated";
 import { WorkspaceAttentionDot } from "./WorkspaceAttentionDot";
 
@@ -13,6 +13,7 @@ export type ResourceCreationIntent =
   | { kind: "object"; objectType: WorkspaceObjectType };
 
 export type ResourceAction = "rename" | "delete" | "copy";
+type ResourceMenuAction = ResourceAction | "download";
 
 type CreateMenuTarget = {
   folderId: string | null;
@@ -37,6 +38,7 @@ type ResourceTreeProps = {
   onMove: (nodeId: string, parentId: string | null) => Promise<void>;
   onCreateRequest: (folderId: string | null, intent: ResourceCreationIntent) => void;
   onActionRequest: (node: WorkspaceTreeNode, action: ResourceAction) => void;
+  onDownloadRequest: (node: WorkspaceObjectNode, media: MediaItem | null) => void;
   onRootActionRequest: (action: ResourceAction) => void;
 };
 
@@ -65,7 +67,7 @@ export function ResourceTree(props: ResourceTreeProps) {
 
   useEffect(() => {
     if (!contextTarget) return;
-    contextRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus();
+    contextRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus({ preventScroll: true });
     const close = (event: KeyboardEvent | PointerEvent) => {
       if (event instanceof KeyboardEvent) {
         if (event.key !== "Escape") return;
@@ -78,20 +80,23 @@ export function ResourceTree(props: ResourceTreeProps) {
     window.addEventListener("keydown", close);
     window.addEventListener("pointerdown", close);
     window.addEventListener("resize", closeOnViewportChange);
-    window.addEventListener("scroll", closeOnViewportChange, true);
+    window.addEventListener("wheel", closeOnViewportChange, true);
+    window.addEventListener("touchmove", closeOnViewportChange, true);
     return () => {
       window.removeEventListener("keydown", close);
       window.removeEventListener("pointerdown", close);
       window.removeEventListener("resize", closeOnViewportChange);
-      window.removeEventListener("scroll", closeOnViewportChange, true);
+      window.removeEventListener("wheel", closeOnViewportChange, true);
+      window.removeEventListener("touchmove", closeOnViewportChange, true);
     };
   }, [contextTarget]);
 
   const openContextMenu = (node: WorkspaceTreeNode, trigger: HTMLButtonElement, x: number, y: number, root = false) => {
     setCreateTarget(null);
+    const menuHeight = menuActions(node, root).length * 38 + 28;
     setContextTarget({ node, root, trigger,
       left: Math.max(8, Math.min(x, window.innerWidth - 172)),
-      top: Math.max(8, Math.min(y, window.innerHeight - 142)),
+      top: Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8)),
     });
   };
   const contextMenu = (node: WorkspaceTreeNode, event: MouseEvent<HTMLButtonElement>) => {
@@ -105,6 +110,11 @@ export function ResourceTree(props: ResourceTreeProps) {
     openContextMenu(node, event.currentTarget, rect.left + 24, rect.bottom);
   };
   const rootNode: WorkspaceTreeNode = { kind: "folder", id: `storyboard-${props.rootName}`, name: props.rootName, children: [] };
+  const contextMedia = contextTarget?.node.kind === "object"
+    ? contextTarget.node.selection.kind === "item"
+      ? itemsById.get(contextTarget.node.selection.itemId)?.media ?? null
+      : props.objectMedia[contextTarget.node.id] ?? null
+    : null;
 
   useEffect(() => {
     if (!createTarget) return;
@@ -277,22 +287,31 @@ export function ResourceTree(props: ResourceTreeProps) {
         <div ref={contextRef} className="resource-create__menu resource-context__menu" role="menu"
           aria-label={`${contextTarget.node.name}操作`}
           style={{ top: contextTarget.top, left: contextTarget.left }}>
-          {(contextTarget.root || !containsScript(contextTarget.node)
-            ? ["rename", "copy", "delete"] as const
-            : ["rename"] as const).map((action) => (
+          {menuActions(contextTarget.node, contextTarget.root).map((action) => (
             <button key={action} type="button" role="menuitem"
+              disabled={action === "download" && contextTarget.node.kind === "object"
+                && contextTarget.node.selection.kind !== "script"
+                && (contextMedia?.status !== "ready" || !contextMedia.preview?.url)}
               onClick={() => {
-                if (contextTarget.root) props.onRootActionRequest(action);
+                if (action === "download" && contextTarget.node.kind === "object") props.onDownloadRequest(contextTarget.node, contextMedia);
+                else if (contextTarget.root) props.onRootActionRequest(action);
                 else props.onActionRequest(contextTarget.node, action);
                 setContextTarget(null);
               }}>
-              {action === "rename" ? "重命名" : action === "copy" ? "复制" : "删除"}
+              {action === "rename" ? "重命名" : action === "copy" ? "复制" : action === "download" ? "下载" : "删除"}
             </button>
           ))}
         </div>
       ) : null}
     </div>
   );
+}
+
+function menuActions(node: WorkspaceTreeNode, root: boolean): ResourceMenuAction[] {
+  if (root) return ["rename", "copy", "delete"];
+  if (node.kind === "folder") return containsScript(node) ? ["rename"] : ["rename", "copy", "delete"];
+  if (node.selection.kind === "script") return ["rename", "download"];
+  return ["rename", "copy", "download", "delete"];
 }
 
 function containsScript(node: WorkspaceTreeNode): boolean {

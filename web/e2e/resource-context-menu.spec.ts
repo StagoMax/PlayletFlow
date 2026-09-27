@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 const tinyPng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==",
@@ -30,6 +31,14 @@ test("资源右键可重命名、复制和删除，刷新后保持结果", async
   await expect(page.getByRole("button", { name: "重新上传图片" })).toHaveCount(0);
 
   await page.getByRole("button", { name: image, exact: true }).click({ button: "right" });
+  await expect(page.getByRole("menuitem")).toHaveText(["重命名", "复制", "下载", "删除"]);
+  const imageDownload = page.waitForEvent("download");
+  await page.getByRole("menuitem", { name: "下载" }).click();
+  const downloadedImage = await imageDownload;
+  expect(downloadedImage.suggestedFilename()).toBe(`${image}.png`);
+  expect(await readFile(await downloadedImage.path())).toEqual(tinyPng);
+
+  await page.getByRole("button", { name: image, exact: true }).click({ button: "right" });
   await page.getByRole("menuitem", { name: "重命名" }).click();
   await page.getByRole("dialog", { name: "重命名资源" }).getByRole("textbox", { name: "名称" }).fill(renamed);
   await page.getByRole("dialog", { name: "重命名资源" }).getByRole("button", { name: "保存" }).click();
@@ -52,6 +61,33 @@ test("资源右键可重命名、复制和删除，刷新后保持结果", async
   await expect(page.getByRole("button", { name: `${folder} 副本`, exact: true })).toBeVisible();
   await page.getByRole("button", { name: renamed, exact: true }).click();
   await expect(page.getByRole("img", { name: renamed })).toBeVisible();
+});
+
+test("脚本与视频可下载，未上传的媒体不可下载", async ({ page }) => {
+  await page.goto("/?fixture=ready");
+  await page.getByRole("button", { name: "该片段的脚本", exact: true }).click({ button: "right" });
+  await expect(page.getByRole("menuitem")).toHaveText(["重命名", "下载"]);
+  const scriptDownload = page.waitForEvent("download");
+  await page.getByRole("menuitem", { name: "下载" }).click();
+  const script = await scriptDownload;
+  expect(script.suggestedFilename()).toBe("该片段的脚本.txt");
+  expect((await readFile(await script.path(), "utf8")).length).toBeGreaterThan(0);
+
+  await page.getByRole("button", { name: /^生成版本 03，可预览/ }).click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "下载" })).toBeVisible();
+  const videoDownload = page.waitForEvent("download");
+  await page.getByRole("menuitem", { name: "下载" }).click();
+  const video = await videoDownload;
+  expect(video.suggestedFilename()).toBe("生成版本 03.webm");
+  expect((await readFile(await video.path())).subarray(0, 4).toString("hex")).toBe("1a45dfa3");
+
+  await page.getByRole("button", { name: "资产", exact: true }).hover();
+  await page.getByRole("button", { name: "在资产中新建" }).click();
+  await page.getByRole("menuitem", { name: "图片对象" }).click();
+  await page.getByRole("dialog").getByRole("textbox", { name: "名称" }).fill("尚未上传图片");
+  await page.getByRole("dialog").getByRole("button", { name: "创建" }).click();
+  await page.getByRole("button", { name: "尚未上传图片", exact: true }).click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "下载" })).toBeDisabled();
 });
 
 test("新片段的默认目录也可右键编辑", async ({ page }) => {

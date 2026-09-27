@@ -4,6 +4,7 @@ import { Icon } from "../workspace/Icons";
 import { DeleteStoryboardDialog } from "../storyboards/DeleteStoryboardDialog";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import type { WorkspaceObjectType, WorkspaceTreeNode } from "../workspace/types";
+import { downloadResource } from "./downloadResource";
 import { ResourceTree, type ResourceAction, type ResourceCreationIntent } from "./ResourceTree";
 
 type CreationIntent = ResourceCreationIntent;
@@ -78,6 +79,13 @@ export function ContentNavigator({
           } else {
             setActionTarget({ node, action });
           }
+        }}
+        onDownloadRequest={(node, media) => {
+          setActionError("");
+          void downloadResource(node, media, current.storyboard.script.text, data.project.id)
+            .catch((cause: unknown) => {
+              setActionError(cause instanceof Error ? cause.message : "下载失败，请重试。");
+            });
         }}
         onRootActionRequest={(action) => {
           setActionError("");

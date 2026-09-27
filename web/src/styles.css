@@ -389,6 +389,7 @@ body.workspace-resizing, body.workspace-resizing * { cursor: col-resize !importa
   text-align: left;
 }
 .resource-create__menu button:hover, .resource-create__menu button:focus-visible { color: var(--text); background: var(--surface-control-hover); }
+.resource-create__menu button:disabled { color: var(--text-muted); cursor: not-allowed; }
 .resource-create__menu button svg { width: 15px; height: 15px; color: var(--accent-strong); }
 .resource-context__menu { width: 164px; }
 .resource-action-error { margin: 8px 6px; color: var(--danger); font-size: var(--font-size-label); }
