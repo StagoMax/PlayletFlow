@@ -15,11 +15,13 @@ const assetModule = await server.ssrLoadModule("/src/assets/assetTestCases.tsx")
 const composerModule = await server.ssrLoadModule("/src/composer/composerTestCases.ts");
 const proposalModule = await server.ssrLoadModule("/src/proposals/proposalTestCases.tsx");
 const workspaceModule = await server.ssrLoadModule("/src/workspace/workspaceTestCases.ts");
+const generationModule = await server.ssrLoadModule("/src/generation/generationTestCases.ts");
 const cases = {
   ...assetModule.assetTestCases,
   ...composerModule.composerTestCases,
   ...proposalModule.proposalTestCases,
   ...workspaceModule.workspaceTestCases,
+  ...generationModule.generationTestCases,
 };
 
 test("asset and proposal UI module cases", async (context) => {

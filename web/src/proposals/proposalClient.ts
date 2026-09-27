@@ -9,7 +9,7 @@ import type {
 import { cloudWorkspaceKey, flushCloudWorkspace, readCloudWorkspace } from "../workspace/cloudWorkspaceSync";
 import { hydrateBrowserWorkspaceMedia, saveBrowserWorkspace } from "../workspace/browserWorkspaceStorage";
 import type { WorkspaceSnapshot } from "../workspace/types";
-import { inputPayloads } from "../generation/cloudGenerationClient";
+import { generationRequestBody, inputPayloads } from "../generation/cloudGenerationClient";
 
 export interface ProposalClient {
   listGenerationModels(signal?: AbortSignal): Promise<GenerationModel[]>;
@@ -115,7 +115,7 @@ function command(body: ResolveProposalRequest, idempotencyKey: string, signal?: 
   return {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify(body),
+    body: generationRequestBody(body),
     signal,
   };
 }
