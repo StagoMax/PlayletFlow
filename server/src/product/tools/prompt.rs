@@ -22,6 +22,8 @@ struct PromptChangeInput {
     target_id: Uuid,
     base_revision: i64,
     proposed_prompt: String,
+    #[serde(default)]
+    reference_ids: Vec<String>,
     input: GenerationInputSelection,
     summary: String,
 }
@@ -33,7 +35,7 @@ impl Tool for ProposeImagePromptChangeTool {
     }
 
     fn description(&self) -> &str {
-        "Propose an image prompt and its ordered reference images for later user confirmation and generation. Use this only when the user wants a generation proposal. When the user only wants text filled into an object's prompt editor without generation, use save_workspace_object_prompt instead."
+        "Propose an image prompt for confirmation and generation. Image IDs in input are also shown as asset references in the prompt editor. Put any additional @mentioned assets in referenceIds. Use save_workspace_object_prompt when the user only wants prompt text saved."
     }
 
     fn schema(&self) -> Value {
@@ -44,6 +46,7 @@ impl Tool for ProposeImagePromptChangeTool {
                 "targetId": { "type": "string", "format": "uuid" },
                 "baseRevision": { "type": "integer", "minimum": 1 },
                 "proposedPrompt": { "type": "string", "minLength": 1, "maxLength": 10000 },
+                "referenceIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
                 "input": { "type": "object", "properties": {
                     "type": { "type": "string", "enum": ["textOnly", "referenceImages"] },
                     "mediaIds": { "type": "array", "items": { "type": "string", "format": "uuid" }, "maxItems": 14 }
@@ -83,7 +86,7 @@ impl Tool for ProposeVideoPromptChangeTool {
     }
 
     fn description(&self) -> &str {
-        "Propose a video prompt and image inputs for later user confirmation and generation. Use this only when the user wants a generation proposal. When the user only wants text filled into an object's prompt editor without generation, use save_workspace_object_prompt instead."
+        "Propose a video prompt for confirmation and generation. Image IDs in input are also shown as asset references in the prompt editor. Put any additional @mentioned assets in referenceIds. Use save_workspace_object_prompt when the user only wants prompt text saved."
     }
 
     fn schema(&self) -> Value {
@@ -91,6 +94,7 @@ impl Tool for ProposeVideoPromptChangeTool {
             "targetId":{"type":"string","format":"uuid"},
             "baseRevision":{"type":"integer","minimum":1},
             "proposedPrompt":{"type":"string","minLength":1,"maxLength":10000},
+            "referenceIds":{"type":"array","items":{"type":"string"},"uniqueItems":true},
             "input":{"type":"object","properties":{
                 "type":{"type":"string","enum":["textOnly","firstLastFrames","referenceImages"]},
                 "firstFrameMediaId":{"type":"string","format":"uuid"},
@@ -165,13 +169,27 @@ async fn propose_prompt(
         }
         .into());
     }
+    let generation_media_ids = input
+        .input
+        .media_ids()
+        .into_iter()
+        .map(|id| id.0.to_string())
+        .collect::<Vec<_>>();
+    let prompt = services
+        .referenced_prompt(
+            invocation.thread_id,
+            &input.proposed_prompt,
+            &input.reference_ids,
+            &generation_media_ids,
+        )
+        .await?;
     let proposal = services
         .proposals
         .create(CreateProposal {
             project_id: scope.project_id,
             storyboard_id: scope.storyboard_id,
             target,
-            proposed_value: input.proposed_prompt,
+            proposed_value: prompt.value,
             proposed_input: Some(input.input),
             summary: input.summary,
             source: invocation.source(call_id),

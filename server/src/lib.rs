@@ -8,5 +8,6 @@ mod conversation_events;
 mod conversation_references;
 mod history;
 pub mod product;
+mod prompt_references;
 mod rate_limit;
 mod runtime;

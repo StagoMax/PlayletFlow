@@ -11,6 +11,8 @@ struct SaveWorkspaceObjectPromptToolInput {
     target_id: Uuid,
     base_revision: i64,
     prompt: String,
+    #[serde(default)]
+    reference_ids: Vec<String>,
 }
 
 #[async_trait]
@@ -20,7 +22,7 @@ impl Tool for SaveWorkspaceObjectPromptTool {
     }
 
     fn description(&self) -> &str {
-        "Save a prompt directly into an existing image or video object's prompt editor without generating media. Use this when the user asks to write, fill, draft, revise, or generate only a prompt. The new prompt becomes the only visible current version; the previous version is retained for the user's Ctrl+Z undo. Read or search first for targetId and baseRevision. This never creates a proposal or a generation job."
+        "Save a prompt directly into an existing image or video object's editor without generation. Search or read first for targetId, baseRevision, and any referenced asset IDs. Put referenced IDs in referenceIds so @mentions display as asset references. The previous version remains available for Ctrl+Z undo."
     }
 
     fn schema(&self) -> Value {
@@ -29,7 +31,8 @@ impl Tool for SaveWorkspaceObjectPromptTool {
             "properties": {
                 "targetId": { "type": "string", "format": "uuid" },
                 "baseRevision": { "type": "integer", "minimum": 1 },
-                "prompt": { "type": "string", "minLength": 1, "maxLength": 10000 }
+                "prompt": { "type": "string", "minLength": 1, "maxLength": 10000 },
+                "referenceIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
             },
             "required": ["targetId", "baseRevision", "prompt"],
             "additionalProperties": false
@@ -59,6 +62,15 @@ impl Tool for SaveWorkspaceObjectPromptTool {
             )
             .into());
         }
+        let prompt = self
+            .services
+            .referenced_prompt(
+                invocation.thread_id,
+                &input.prompt,
+                &input.reference_ids,
+                &[],
+            )
+            .await?;
         let saved = self
             .services
             .workspace_nodes
@@ -67,7 +79,7 @@ impl Tool for SaveWorkspaceObjectPromptTool {
                     project_id: scope.project_id,
                     storyboard_id: scope.storyboard_id,
                     target_id,
-                    prompt: input.prompt,
+                    prompt: prompt.value,
                     expected_revision: input.base_revision,
                 },
                 call.id.to_string(),
@@ -79,6 +91,7 @@ impl Tool for SaveWorkspaceObjectPromptTool {
             "objectType": saved.object_type,
             "revision": saved.revision,
             "generationRequested": false,
+            "referenceIds": prompt.reference_ids,
             "message": "提示词已写入对象输入框，未发送生成。"
         });
         Ok(ToolResult::text(

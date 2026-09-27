@@ -70,7 +70,8 @@ pub(super) fn save_prompt(
     }
     let current = transaction
         .query_row(
-            "SELECT node.id, node.object_type, media.id, media.prompt, media.revision
+            "SELECT node.id, node.object_type, media.id,
+                    COALESCE(media.prompt, ''), media.revision
              FROM workspace_nodes node
              JOIN media_items media ON media.id = node.target_id
                AND media.project_id = node.project_id

@@ -1,4 +1,7 @@
 use super::{CloudDocument, CloudWorkspaceStore};
+use crate::prompt_references::{
+    compose_referenced_prompt, PromptReferenceSource, ReferencedPrompt,
+};
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -86,6 +89,12 @@ struct Resource {
 }
 
 impl Resource {
+    fn matches_id(&self, id: &str) -> bool {
+        self.id == id
+            || (self.role.as_deref() == Some("script")
+                && self.id.strip_prefix("script-") == Some(id))
+    }
+
     fn full(&self) -> Value {
         json!({"id":self.id,"kind":self.kind,"name":self.name,"role":self.role,
             "content":self.content,"status":self.status,"revision":self.revision,
@@ -123,14 +132,15 @@ fn flatten_tree(value: &Value) -> Vec<&Value> {
 
 fn resources(snapshot: &Value, project_id: &str, storyboard_id: &str) -> Result<Vec<Resource>> {
     let ws = workspace(snapshot, project_id, storyboard_id)?;
+    let script_id = format!("script-{storyboard_id}");
     let script = ws
         .pointer("/storyboard/script")
         .context("script not found")?;
     let mut result = vec![Resource {
-        id: storyboard_id.to_owned(),
+        id: script_id.clone(),
         kind: "text".into(),
-        name: "脚本".into(),
-        role: None,
+        name: "片段脚本".into(),
+        role: Some("script".into()),
         content: script
             .get("text")
             .and_then(Value::as_str)
@@ -147,18 +157,43 @@ fn resources(snapshot: &Value, project_id: &str, storyboard_id: &str) -> Result<
         let Some(kind) = node.get("objectType").and_then(Value::as_str) else {
             continue;
         };
-        if kind == "text" {
+        if kind == "text"
+            && (node.pointer("/selection/kind").and_then(Value::as_str) == Some("script")
+                || node.get("id").and_then(Value::as_str) == Some(script_id.as_str()))
+        {
             continue;
         }
         let Some(object_id) = node.get("id").and_then(Value::as_str) else {
             continue;
         };
-        let media = snapshot
+        if kind == "text" {
+            result.push(Resource {
+                id: object_id.to_owned(),
+                kind: "text".into(),
+                name: node
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+                role: Some("emptyObject".into()),
+                content: None,
+                status: None,
+                revision: node.get("revision").and_then(Value::as_i64).unwrap_or(1),
+                editable: false,
+            });
+            continue;
+        }
+        let Some(media) = snapshot
             .get("objectMedia")
-            .and_then(|map| map.get(object_id));
+            .and_then(|map| map.get(object_id))
+        else {
+            // Bound asset navigation nodes are listed from assetGroups below.
+            // A tree node alone has no writable media resource.
+            continue;
+        };
         result.push(Resource {
             id: media
-                .and_then(|m| m.get("id"))
+                .get("id")
                 .and_then(Value::as_str)
                 .unwrap_or(object_id)
                 .to_owned(),
@@ -168,22 +203,16 @@ fn resources(snapshot: &Value, project_id: &str, storyboard_id: &str) -> Result<
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_owned(),
-            role: media
-                .and_then(|m| m.get("role"))
-                .and_then(Value::as_str)
-                .map(str::to_owned),
+            role: media.get("role").and_then(Value::as_str).map(str::to_owned),
             content: media
-                .and_then(|m| m.get("prompt"))
+                .get("prompt")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
             status: media
-                .and_then(|m| m.get("status"))
+                .get("status")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
-            revision: media
-                .and_then(|m| m.get("revision"))
-                .and_then(Value::as_i64)
-                .unwrap_or(1),
+            revision: media.get("revision").and_then(Value::as_i64).unwrap_or(1),
             editable: true,
         });
     }
@@ -284,6 +313,43 @@ fn output(call: Uuid, payload: Value) -> Result<ToolResult> {
     ))
 }
 
+fn referenced_prompt(
+    snapshot: &Value,
+    project_id: &str,
+    storyboard_id: &str,
+    prompt: &str,
+    input: &Value,
+    generation_media_ids: &[String],
+) -> Result<ReferencedPrompt> {
+    let reference_ids = input
+        .get("referenceIds")
+        .map(|value| {
+            value
+                .as_array()
+                .context("referenceIds must be an array")?
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .map(str::to_owned)
+                        .context("referenceIds must contain strings")
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let sources = resources(snapshot, project_id, storyboard_id)?
+        .into_iter()
+        .map(|item| PromptReferenceSource {
+            is_script: item.role.as_deref() == Some("script"),
+            id: item.id,
+            kind: item.kind,
+            name: item.name,
+        })
+        .collect::<Vec<_>>();
+    compose_referenced_prompt(prompt, &reference_ids, generation_media_ids, &sources)
+        .map_err(|message| anyhow!(message))
+}
+
 #[async_trait]
 impl Tool for CloudTool {
     fn name(&self) -> &str {
@@ -291,22 +357,22 @@ impl Tool for CloudTool {
     }
     fn description(&self) -> &str {
         match self.kind {
-            0 => "Create an image or video object with a saved prompt in the current storyboard folder. This does not start generation.",
-            1 => "Save a prompt directly in an existing storyboard-owned image or video object without generating media. Search or read first for ID and revision.",
-            2 => "Search the current storyboard script, bound assets, images and videos by name or content. Returns stable IDs and revisions; supports pagination.",
+            0 => "Create an image or video object with a saved prompt in the current storyboard folder. Pass stable asset IDs in referenceIds so @mentions display as asset references. This does not start generation.",
+            1 => "Save a prompt directly in an existing storyboard-owned image or video object without generation. Search or read first for ID, revision, and referenced asset IDs; pass asset IDs in referenceIds.",
+            2 => "Search the current storyboard script, bound assets, images and videos by name or content. For prompt referenceIds use image/video IDs; assetBinding IDs are prompt targets. Returns stable IDs and revisions; supports pagination.",
             3 => "Read a storyboard resource by kind and ID returned by search_storyboard_assets.",
             4 => "Propose one exact-context replacement in the current script for user confirmation.",
-            5 => "Propose an image prompt for user confirmation. Use save_workspace_object_prompt when the user only wants prompt text saved.",
-            _ => "Propose a video prompt for user confirmation. Use save_workspace_object_prompt when the user only wants prompt text saved.",
+            5 => "Propose an image prompt for user confirmation. Image IDs in input become visible asset references; pass additional @mentioned IDs in referenceIds. Use save_workspace_object_prompt when only saving prompt text.",
+            _ => "Propose a video prompt for user confirmation. Image IDs in input become visible asset references; pass additional @mentioned IDs in referenceIds. Use save_workspace_object_prompt when only saving prompt text.",
         }
     }
     fn schema(&self) -> Value {
         match self.kind {
             0 => {
-                json!({"type":"object","properties":{"parentId":{"type":["string","null"]},"name":{"type":"string"},"objectType":{"type":"string","enum":["image","video"]},"prompt":{"type":"string"}},"required":["parentId","name","objectType","prompt"],"additionalProperties":false})
+                json!({"type":"object","properties":{"parentId":{"type":["string","null"]},"name":{"type":"string"},"objectType":{"type":"string","enum":["image","video"]},"prompt":{"type":"string"},"referenceIds":{"type":"array","items":{"type":"string"},"uniqueItems":true}},"required":["parentId","name","objectType","prompt"],"additionalProperties":false})
             }
             1 => {
-                json!({"type":"object","properties":{"targetId":{"type":"string"},"baseRevision":{"type":"integer","minimum":1},"prompt":{"type":"string"}},"required":["targetId","baseRevision","prompt"],"additionalProperties":false})
+                json!({"type":"object","properties":{"targetId":{"type":"string"},"baseRevision":{"type":"integer","minimum":1},"prompt":{"type":"string"},"referenceIds":{"type":"array","items":{"type":"string"},"uniqueItems":true}},"required":["targetId","baseRevision","prompt"],"additionalProperties":false})
             }
             2 => {
                 json!({"type":"object","properties":{"query":{"type":"string"},"kind":{"type":"string","enum":["text","assetBinding","image","video"]},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false})
@@ -318,10 +384,10 @@ impl Tool for CloudTool {
                 json!({"type":"object","properties":{"targetId":{"type":"string"},"baseRevision":{"type":"integer","minimum":1},"oldText":{"type":"string"},"newText":{"type":"string"},"summary":{"type":"string"}},"required":["targetId","baseRevision","oldText","newText","summary"],"additionalProperties":false})
             }
             5 => {
-                json!({"type":"object","properties":{"targetType":{"type":"string","enum":["media","assetBinding"]},"targetId":{"type":"string"},"baseRevision":{"type":"integer","minimum":1},"proposedPrompt":{"type":"string"},"input":{"type":"object"},"summary":{"type":"string"}},"required":["targetType","targetId","baseRevision","proposedPrompt","input","summary"],"additionalProperties":false})
+                json!({"type":"object","properties":{"targetType":{"type":"string","enum":["media","assetBinding"]},"targetId":{"type":"string"},"baseRevision":{"type":"integer","minimum":1},"proposedPrompt":{"type":"string"},"referenceIds":{"type":"array","items":{"type":"string"},"uniqueItems":true},"input":{"type":"object"},"summary":{"type":"string"}},"required":["targetType","targetId","baseRevision","proposedPrompt","input","summary"],"additionalProperties":false})
             }
             _ => {
-                json!({"type":"object","properties":{"targetId":{"type":"string"},"baseRevision":{"type":"integer","minimum":1},"proposedPrompt":{"type":"string"},"input":{"type":"object"},"summary":{"type":"string"}},"required":["targetId","baseRevision","proposedPrompt","input","summary"],"additionalProperties":false})
+                json!({"type":"object","properties":{"targetId":{"type":"string"},"baseRevision":{"type":"integer","minimum":1},"proposedPrompt":{"type":"string"},"referenceIds":{"type":"array","items":{"type":"string"},"uniqueItems":true},"input":{"type":"object"},"summary":{"type":"string"}},"required":["targetId","baseRevision","proposedPrompt","input","summary"],"additionalProperties":false})
             }
         }
     }
@@ -388,7 +454,7 @@ impl Tool for CloudTool {
                     items
                         .into_iter()
                         .find(|item| {
-                            item.id == string(input, "id").unwrap_or("")
+                            item.matches_id(string(input, "id").unwrap_or(""))
                                 && item.kind == string(input, "kind").unwrap_or("")
                         })
                         .context("resource not found")?
@@ -443,6 +509,7 @@ fn create_object(
     }
     let parent = input.get("parentId").and_then(Value::as_str);
     let ws = workspace(&doc.snapshot, project_id, storyboard_id)?;
+    let prompt = referenced_prompt(&doc.snapshot, project_id, storyboard_id, prompt, input, &[])?;
     if let Some(parent_id) = parent {
         if !flatten_tree(ws.get("navigationTree").unwrap_or(&Value::Null))
             .iter()
@@ -471,14 +538,15 @@ fn create_object(
     }
     doc.snapshot["objectMedia"][&id] = json!({
         "id":id,"projectId":project_id,"owner":{"type":"storyboard","storyboardId":storyboard_id},
-        "kind":object_type,"role":"custom","name":name,"prompt":prompt,
+        "kind":object_type,"role":"custom","name":name,"prompt":prompt.value,
         "mimeType":if object_type == "video" {"video/mp4"} else {"image/png"},
         "width":null,"height":null,"durationMs":null,"status":"placeholder","revision":1,
         "thumbnail":null,"preview":null,"generation":null,"createdAt":now,"updatedAt":now,
     });
     Ok(
         json!({"objectId":id,"mediaId":id,"parentId":parent,"name":name,"objectType":object_type,
-        "mediaStatus":"placeholder","generationRequested":false,"message":"对象和提示词已创建，未发送生成。"}),
+        "mediaStatus":"placeholder","generationRequested":false,"referenceIds":prompt.reference_ids,
+        "message":"对象和提示词已创建，未发送生成。"}),
     )
 }
 
@@ -524,6 +592,7 @@ fn save_prompt(
     if resource.revision != base {
         bail!("media revision changed");
     }
+    let prompt = referenced_prompt(&doc.snapshot, project_id, storyboard_id, prompt, input, &[])?;
     let (object_id, media) = doc
         .snapshot
         .get_mut("objectMedia")
@@ -532,12 +601,13 @@ fn save_prompt(
         .iter_mut()
         .find(|(_, media)| media.get("id").and_then(Value::as_str) == Some(target_id))
         .context("media not found")?;
-    media["prompt"] = json!(prompt);
+    media["prompt"] = json!(prompt.value);
     media["revision"] = json!(base + 1);
     media["updatedAt"] = json!(Utc::now().to_rfc3339());
     Ok(
         json!({"objectId":object_id,"mediaId":target_id,"objectType":resource.kind,
-        "revision":base+1,"generationRequested":false,"message":"提示词已写入对象输入框，未发送生成。"}),
+        "revision":base+1,"generationRequested":false,"referenceIds":prompt.reference_ids,
+        "message":"提示词已写入对象输入框，未发送生成。"}),
     )
 }
 
@@ -554,7 +624,7 @@ fn propose(
     let base = revision(input)?;
     let resource = resources(&doc.snapshot, &scope.project_id, &scope.storyboard_id)?
         .into_iter()
-        .find(|item| item.id == target_id)
+        .find(|item| item.matches_id(target_id))
         .context("resource not found")?;
     if !resource.editable || resource.revision != base {
         bail!("resource revision changed or is read only");
@@ -613,6 +683,31 @@ fn propose(
         {
             bail!("image prompts cannot use first/last frames");
         }
+        let media_ids = match generation_input.get("type").and_then(Value::as_str) {
+            Some("referenceImages") => generation_input
+                .get("mediaIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+            Some("firstLastFrames") => ["firstFrameMediaId", "lastFrameMediaId"]
+                .into_iter()
+                .filter_map(|key| generation_input.get(key).and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        let proposed = referenced_prompt(
+            &doc.snapshot,
+            &scope.project_id,
+            &scope.storyboard_id,
+            &proposed,
+            input,
+            &media_ids,
+        )?
+        .value;
         (target, proposed, generation_input)
     };
     let summary = string(input, "summary")?;
@@ -813,10 +908,167 @@ mod tests {
         .unwrap();
         let found = resources(&document.snapshot, "p", "s").unwrap();
         assert_eq!(found.len(), 2);
-        assert_eq!(found[0].id, "s");
+        assert_eq!(found[0].id, "script-s");
+        assert!(found[0].matches_id("s"));
+        assert!(found[0].matches_id("script-s"));
         assert_eq!(found[1].id, created["mediaId"]);
         assert_eq!(found[1].content.as_deref(), Some("sheep jumping"));
         assert!(resources(&document.snapshot, "other", "s").is_err());
+    }
+
+    #[test]
+    fn scoped_resources_include_empty_text_nodes_without_duplicating_the_script() {
+        let mut current = snapshot();
+        current["workspaces"]["s"]["navigationTree"][0]["children"] = json!([
+            {"kind":"object","id":"script-s","name":"该片段的脚本","objectType":"text",
+             "selection":{"kind":"script","storyboardId":"s"}},
+            {"kind":"object","id":"notes","name":"空白备注","objectType":"text",
+             "revision":3,"selection":{"kind":"node","nodeId":"notes"}}
+        ]);
+        let found = resources(&current, "p", "s").unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].id, "script-s");
+        assert_eq!(found[1].id, "notes");
+        assert_eq!(found[1].role.as_deref(), Some("emptyObject"));
+        assert_eq!(found[1].revision, 3);
+        assert!(!found[1].editable);
+    }
+
+    #[test]
+    fn bound_asset_navigation_node_does_not_create_a_fake_writable_media_resource() {
+        let mut current = snapshot();
+        current["workspaces"]["s"]["navigationTree"][0]["children"] = json!([
+            {"kind":"object","id":"asset-node","name":"牧场","objectType":"image",
+             "selection":{"kind":"item","itemId":"binding"}}
+        ]);
+        current["workspaces"]["s"]["assetGroups"] = json!([{
+            "items":[{
+                "id":"binding",
+                "media":{"id":"image-1","kind":"image","name":"牧场","prompt":"晨光",
+                         "status":"ready","revision":1}
+            }]
+        }]);
+        let found = resources(&current, "p", "s").unwrap();
+        assert_eq!(found.len(), 3);
+        assert!(found
+            .iter()
+            .any(|item| item.id == "image-1" && !item.editable));
+        assert!(found
+            .iter()
+            .any(|item| item.id == "binding" && item.editable));
+        assert!(!found.iter().any(|item| item.id == "asset-node"));
+    }
+
+    #[test]
+    fn saves_prompt_into_null_cloud_placeholder_without_generation() {
+        let mut document = CloudDocument {
+            snapshot: snapshot(),
+            proposals: vec![],
+        };
+        document.snapshot["workspaces"]["s"]["navigationTree"][0]["children"] = json!([
+            {"kind":"object","id":"clip","name":"待写提示词","objectType":"video"}
+        ]);
+        document.snapshot["objectMedia"]["clip"] = json!({
+            "id":"clip","kind":"video","role":"custom","name":"待写提示词",
+            "prompt":null,"status":"placeholder","revision":1
+        });
+
+        let saved = save_prompt(
+            &mut document,
+            "p",
+            "s",
+            &json!({"targetId":"clip","baseRevision":1,"prompt":"牧羊犬数羊"}),
+        )
+        .unwrap();
+        assert_eq!(saved["revision"], 2);
+        assert_eq!(saved["generationRequested"], false);
+        assert_eq!(
+            document.snapshot["objectMedia"]["clip"]["prompt"],
+            "牧羊犬数羊"
+        );
+        assert_eq!(document.snapshot["objectMedia"]["clip"]["revision"], 2);
+        assert!(document.proposals.is_empty());
+    }
+
+    #[test]
+    fn cloud_tool_prompts_resolve_current_storyboard_references() {
+        let mut document = CloudDocument {
+            snapshot: snapshot(),
+            proposals: vec![],
+        };
+        let image = create_object(
+            &mut document,
+            "p",
+            "s",
+            &json!({
+                "parentId":null,"name":"牧羊犬","objectType":"image","prompt":"角色设定"
+            }),
+        )
+        .unwrap();
+        let image_id = image["mediaId"].as_str().unwrap().to_owned();
+        let script_reference = referenced_prompt(
+            &document.snapshot,
+            "p",
+            "s",
+            "依据 @片段脚本 生成",
+            &json!({"referenceIds":["script-s"]}),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(script_reference.reference_ids, vec!["script-s"]);
+        assert!(script_reference
+            .value
+            .ends_with("- 文本「片段脚本」(script-s)"));
+        let legacy_script_reference = referenced_prompt(
+            &document.snapshot,
+            "p",
+            "s",
+            &script_reference.value,
+            &json!({"referenceIds":["s"]}),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(legacy_script_reference.value, script_reference.value);
+        let video = create_object(
+            &mut document,
+            "p",
+            "s",
+            &json!({
+                "parentId":null,"name":"镜头","objectType":"video",
+                "prompt":"参考 @牧羊犬 拍摄","referenceIds":[image_id]
+            }),
+        )
+        .unwrap();
+        let video_id = video["mediaId"].as_str().unwrap();
+        let expected_footer = format!("- 图片「牧羊犬」({image_id})");
+        assert!(document.snapshot["objectMedia"][video_id]["prompt"]
+            .as_str()
+            .unwrap()
+            .ends_with(&expected_footer));
+        let saved = save_prompt(
+            &mut document,
+            "p",
+            "s",
+            &json!({
+                "targetId":video_id,"baseRevision":1,"prompt":"缓慢推进",
+                "referenceIds":[image_id]
+            }),
+        )
+        .unwrap();
+        assert_eq!(saved["referenceIds"], json!([image_id]));
+        assert!(document.snapshot["objectMedia"][video_id]["prompt"]
+            .as_str()
+            .unwrap()
+            .contains("缓慢推进 @牧羊犬\n\n引用资产："));
+        assert!(save_prompt(
+            &mut document,
+            "p",
+            "s",
+            &json!({
+                "targetId":video_id,"baseRevision":2,"prompt":"越界","referenceIds":["other"]
+            })
+        )
+        .is_err());
     }
 
     #[test]

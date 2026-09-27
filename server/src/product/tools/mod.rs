@@ -5,6 +5,9 @@ use crate::product::domain::{
     AssetBindingId, ChangeProposal, GenerationInputSelection, MediaId, ProductError, ProductResult,
     ProjectId, ProposalSource, ProposalTarget, StoryboardId, WorkspaceObjectType,
 };
+use crate::prompt_references::{
+    compose_referenced_prompt, PromptReferenceSource, ReferencedPrompt,
+};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use opentopia_core::model::{ToolCall, ToolResult};
@@ -33,6 +36,12 @@ const READ_TOOL_NAME: &str = "read_storyboard_asset";
 const TEXT_TOOL_NAME: &str = "propose_text_patch";
 const IMAGE_TOOL_NAME: &str = "propose_image_prompt_change";
 const VIDEO_TOOL_NAME: &str = "propose_video_prompt_change";
+
+fn resource_matches_id(resource: &StoryboardResource, id: &str) -> bool {
+    resource.id == id
+        || (resource.role.as_deref() == Some("script")
+            && resource.id.strip_prefix("script-") == Some(id))
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct BoundStoryboardScope {
@@ -73,6 +82,28 @@ struct ProductToolServices {
 impl ProductToolServices {
     async fn resources(&self, thread_id: Uuid) -> ProductResult<Vec<StoryboardResource>> {
         self.scope.store.list_resources(thread_id).await
+    }
+
+    async fn referenced_prompt(
+        &self,
+        thread_id: Uuid,
+        prompt: &str,
+        reference_ids: &[String],
+        generation_media_ids: &[String],
+    ) -> ProductResult<ReferencedPrompt> {
+        let sources = self
+            .resources(thread_id)
+            .await?
+            .into_iter()
+            .map(|item| PromptReferenceSource {
+                id: item.id,
+                kind: item.kind,
+                name: item.name,
+                is_script: item.role.as_deref() == Some("script"),
+            })
+            .collect::<Vec<_>>();
+        compose_referenced_prompt(prompt, reference_ids, generation_media_ids, &sources)
+            .map_err(ProductError::Validation)
     }
 }
 
@@ -115,7 +146,7 @@ struct ProposeTextPatchTool {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TextPatchInput {
-    target_id: Uuid,
+    target_id: String,
     base_revision: i64,
     old_text: String,
     new_text: String,
@@ -136,7 +167,7 @@ impl Tool for ProposeTextPatchTool {
         json!({
             "type": "object",
             "properties": {
-                "targetId": { "type": "string", "format": "uuid" },
+                "targetId": { "type": "string" },
                 "baseRevision": { "type": "integer", "minimum": 1 },
                 "oldText": { "type": "string", "minLength": 1 },
                 "newText": { "type": "string" },
@@ -156,7 +187,8 @@ impl Tool for ProposeTextPatchTool {
             .context("propose_text_patch received invalid input")?;
         let invocation = invocation_scope(&ctx)?;
         let scope = self.services.scope.resolve(invocation.thread_id).await?;
-        if input.target_id != scope.storyboard_id.0 {
+        let script_id = format!("script-{}", scope.storyboard_id);
+        if input.target_id != script_id && input.target_id != scope.storyboard_id.to_string() {
             return Err(ProductError::NotFound.into());
         }
         let resource = self
@@ -164,7 +196,7 @@ impl Tool for ProposeTextPatchTool {
             .resources(invocation.thread_id)
             .await?
             .into_iter()
-            .find(|item| item.kind == "text" && item.id == input.target_id.to_string())
+            .find(|item| item.kind == "text" && item.id == script_id)
             .ok_or(ProductError::NotFound)?;
         if resource.revision != input.base_revision {
             return Err(ProductError::RevisionConflict {

@@ -28,6 +28,8 @@ struct CreateWorkspaceObjectInput {
     name: String,
     object_type: MediaObjectType,
     prompt: String,
+    #[serde(default)]
+    reference_ids: Vec<String>,
 }
 
 #[async_trait]
@@ -37,7 +39,7 @@ impl Tool for CreateWorkspaceObjectTool {
     }
 
     fn description(&self) -> &str {
-        "Create an image or video object in a folder from the current storyboard's folder context, and save only its prompt. This never starts media generation. Use the folder's stable ID as parentId, or null for the sidebar root."
+        "Create an image or video object in the current storyboard and save its prompt without generation. For asset @mentions, pass the stable IDs returned by search_storyboard_assets in referenceIds; they become visible asset references in the prompt editor. Use a folder ID as parentId, or null for the root."
     }
 
     fn schema(&self) -> Value {
@@ -47,7 +49,8 @@ impl Tool for CreateWorkspaceObjectTool {
                 "parentId": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
                 "name": { "type": "string", "minLength": 1, "maxLength": 120 },
                 "objectType": { "type": "string", "enum": ["image", "video"] },
-                "prompt": { "type": "string", "minLength": 1, "maxLength": 10000 }
+                "prompt": { "type": "string", "minLength": 1, "maxLength": 10000 },
+                "referenceIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
             },
             "required": ["parentId", "name", "objectType", "prompt"],
             "additionalProperties": false
@@ -63,6 +66,15 @@ impl Tool for CreateWorkspaceObjectTool {
             .context("create_workspace_object received invalid input")?;
         let invocation = invocation_scope(&ctx)?;
         let scope = self.services.scope.resolve(invocation.thread_id).await?;
+        let prompt = self
+            .services
+            .referenced_prompt(
+                invocation.thread_id,
+                &input.prompt,
+                &input.reference_ids,
+                &[],
+            )
+            .await?;
         let object_type: WorkspaceObjectType = input.object_type.into();
         let node = self
             .services
@@ -74,7 +86,7 @@ impl Tool for CreateWorkspaceObjectTool {
                     parent_id: input.parent_id,
                     name: input.name,
                     object_type,
-                    prompt: input.prompt,
+                    prompt: prompt.value,
                 },
                 call.id.to_string(),
             )
@@ -87,6 +99,7 @@ impl Tool for CreateWorkspaceObjectTool {
             "objectType": object_type,
             "mediaStatus": "placeholder",
             "generationRequested": false,
+            "referenceIds": prompt.reference_ids,
             "message": "对象和提示词已创建，未发送生成。"
         });
         Ok(ToolResult::text(

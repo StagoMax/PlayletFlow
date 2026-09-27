@@ -230,6 +230,21 @@ async fn model_context_is_derived_from_the_bound_storyboard_only() {
 #[tokio::test]
 async fn references_resolve_to_canonical_resources_inside_the_bound_storyboard() {
     let app = TestApp::new();
+    // The demo navigation tree uses presentation IDs. Point this node at the
+    // persisted media row before exercising canonical reference resolution.
+    let media_id = "60000000-0000-4000-8000-000000000012";
+    let other_media_id = "60000000-0000-4000-8000-000000000011";
+    rusqlite::Connection::open(&app.path)
+        .unwrap()
+        .execute(
+            "UPDATE workspace_nodes SET target_id = ?1 WHERE storyboard_id = ?2 AND target_id = ?3",
+            rusqlite::params![
+                media_id,
+                demo_storyboard_id(12).to_string(),
+                "video-draft-12"
+            ],
+        )
+        .unwrap();
     let (_, body) = app
         .send("POST", &route(12), Some("reference-resolution-thread-key"))
         .await;
@@ -237,10 +252,7 @@ async fn references_resolve_to_canonical_resources_inside_the_bound_storyboard()
     let script_id = format!("script-{}", demo_storyboard_id(12));
     let references = app
         .service
-        .resolve_references(
-            binding.thread_id,
-            &[script_id.clone(), "video-draft-12".into()],
-        )
+        .resolve_references(binding.thread_id, &[script_id.clone(), media_id.into()])
         .await
         .unwrap();
 
@@ -248,13 +260,69 @@ async fn references_resolve_to_canonical_resources_inside_the_bound_storyboard()
     assert_eq!(references[0].id, script_id);
     assert_eq!(references[0].name, "片段脚本");
     assert_eq!(references[0].kind, "text");
-    assert_eq!(references[1].id, "video-draft-12");
+    assert_eq!(references[1].id, media_id);
     assert_eq!(references[1].name, "生成版本 03");
     assert_eq!(references[1].kind, "video");
 
     let outside_scope = app
         .service
-        .resolve_references(binding.thread_id, &["video-draft-11".into()])
+        .resolve_references(binding.thread_id, &[other_media_id.into()])
         .await;
     assert!(matches!(outside_scope, Err(ProductError::NotFound)));
+
+    let connection = rusqlite::Connection::open(&app.path).unwrap();
+    connection
+        .execute(
+            "UPDATE workspace_nodes SET target_id = ?1
+         WHERE storyboard_id = ?2 AND target_id = ?3",
+            rusqlite::params![other_media_id, demo_storyboard_id(12).to_string(), media_id],
+        )
+        .unwrap();
+    drop(connection);
+    let forged_reference = app
+        .service
+        .resolve_references(binding.thread_id, &[other_media_id.into()])
+        .await;
+    assert!(matches!(forged_reference, Err(ProductError::NotFound)));
+}
+
+#[tokio::test]
+async fn script_reference_survives_a_remapped_navigation_node() {
+    let app = TestApp::new();
+    let storyboard_id = demo_storyboard_id(12);
+    let script_id = format!("script-{storyboard_id}");
+    let connection = rusqlite::Connection::open(&app.path).unwrap();
+    connection
+        .execute(
+            "UPDATE workspace_nodes SET id = ?1
+         WHERE storyboard_id = ?2 AND id = ?3 AND target_type = 'script'",
+            rusqlite::params![
+                Uuid::new_v4().to_string(),
+                storyboard_id.to_string(),
+                script_id
+            ],
+        )
+        .unwrap();
+    drop(connection);
+
+    let (_, body) = app
+        .send("POST", &route(12), Some("remapped-script-reference-thread"))
+        .await;
+    let binding: WorkspaceThreadBinding = serde_json::from_value(body.unwrap()).unwrap();
+    let references = app
+        .service
+        .resolve_references(binding.thread_id, &[script_id.clone()])
+        .await
+        .unwrap();
+    assert_eq!(references[0].id, script_id);
+    assert_eq!(references[0].name, "片段脚本");
+    assert_eq!(references[0].kind, "text");
+
+    let other_script = format!("script-{}", demo_storyboard_id(11));
+    assert!(matches!(
+        app.service
+            .resolve_references(binding.thread_id, &[other_script])
+            .await,
+        Err(ProductError::NotFound)
+    ));
 }

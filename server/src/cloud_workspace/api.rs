@@ -328,7 +328,9 @@ async fn resolve(
         if !options.is_object() {
             return Err(err(StatusCode::BAD_REQUEST, "invalid generation options"));
         }
-        options["input"] = input;
+        if options.get("input").is_none() {
+            options["input"] = input;
+        }
         let options: CloudGenerationOptions = serde_json::from_value(options)
             .map_err(|_| err(StatusCode::BAD_REQUEST, "invalid generation options"))?;
         let target_type = proposal

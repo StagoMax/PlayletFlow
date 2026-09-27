@@ -353,7 +353,7 @@ impl WorkspaceThreadStore for SqliteWorkspaceThreadStore {
             })? {
                 let (content, revision) = row?;
                 resources.push(StoryboardResource {
-                    id: storyboard_id.clone(), kind: "text".into(), name: "片段脚本".into(),
+                    id: format!("script-{storyboard_id}"), kind: "text".into(), name: "片段脚本".into(),
                     role: Some("script".into()), content: Some(content), status: None,
                     revision, editable: true, generation_input: None,
                 });
@@ -378,7 +378,14 @@ impl WorkspaceThreadStore for SqliteWorkspaceThreadStore {
             }
 
             let mut media = connection.prepare(
-                "SELECT media.id, media.kind, media.name, media.role, media.prompt, \
+                "SELECT media.id, media.kind, \
+                        COALESCE((SELECT node.name FROM workspace_nodes node \
+                                  WHERE node.project_id = media.project_id \
+                                    AND node.storyboard_id = ?2 \
+                                    AND node.kind = 'object' AND node.target_type = 'media' \
+                                    AND node.target_id = media.id \
+                                  ORDER BY node.position, node.id LIMIT 1), media.name), \
+                        media.role, media.prompt, \
                         media.status, media.revision, \
                         CASE WHEN media.storyboard_id = ?2 THEN 1 ELSE 0 END \
                  FROM media_items media WHERE media.project_id = ?1 \
@@ -447,6 +454,18 @@ impl WorkspaceThreadStore for SqliteWorkspaceThreadStore {
     ) -> ProductResult<Vec<WorkspaceReference>> {
         let reference_ids = reference_ids.to_vec();
         self.run(move |connection| {
+            let storyboard_id: String = connection
+                .query_row(
+                    "SELECT wt.storyboard_id FROM workspace_thread_bindings wt
+                 JOIN storyboards board ON board.id = wt.storyboard_id
+                   AND board.project_id = wt.project_id AND board.deleted_at IS NULL
+                 WHERE wt.thread_id = ?1",
+                    [thread_id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or(ProductError::NotFound)?;
+            let script_reference_id = format!("script-{storyboard_id}");
             let mut statement = connection.prepare(
                 "SELECT wn.name, wn.object_type
                  FROM workspace_thread_bindings wt
@@ -454,12 +473,51 @@ impl WorkspaceThreadStore for SqliteWorkspaceThreadStore {
                    ON wn.project_id = wt.project_id AND wn.storyboard_id = wt.storyboard_id
                  WHERE wt.thread_id = ?1 AND wn.kind = 'object'
                    AND (wn.id = ?2 OR wn.target_id = ?2)
+                   AND (
+                     (wn.target_type = 'script' AND wn.target_id = wt.storyboard_id
+                       AND EXISTS (SELECT 1 FROM storyboard_scripts script
+                                   WHERE script.storyboard_id = wt.storyboard_id))
+                     OR (wn.target_type = 'empty' AND wn.object_type = 'text')
+                     OR (wn.target_type = 'media' AND (
+                       NOT EXISTS (SELECT 1 FROM media_items media WHERE media.id = wn.target_id)
+                       OR EXISTS (
+                         SELECT 1 FROM media_items media
+                         WHERE media.id = wn.target_id AND media.project_id = wt.project_id
+                           AND media.deleted_at IS NULL
+                           AND (media.storyboard_id = wt.storyboard_id OR EXISTS (
+                             SELECT 1 FROM asset_bindings binding JOIN assets asset
+                               ON asset.id = binding.asset_id AND asset.project_id = binding.project_id
+                             WHERE binding.asset_id = media.asset_id
+                               AND binding.project_id = wt.project_id
+                               AND binding.storyboard_id = wt.storyboard_id
+                               AND asset.deleted_at IS NULL
+                           ))
+                       )
+                     ))
+                   )
                  ORDER BY CASE WHEN wn.id = ?2 THEN 0 ELSE 1 END
                  LIMIT 1",
             )?;
             reference_ids
                 .iter()
                 .map(|reference_id| {
+                    if reference_id == &script_reference_id {
+                        let exists = connection
+                            .query_row(
+                                "SELECT 1 FROM storyboard_scripts WHERE storyboard_id = ?1",
+                                [&storyboard_id],
+                                |_| Ok(()),
+                            )
+                            .optional()?
+                            .is_some();
+                        return exists
+                            .then(|| WorkspaceReference {
+                                id: reference_id.clone(),
+                                name: "片段脚本".to_owned(),
+                                kind: "text".to_owned(),
+                            })
+                            .ok_or(ProductError::NotFound);
+                    }
                     statement
                         .query_row(params![thread_id.to_string(), reference_id], |row| {
                             let name: String = row.get(0)?;

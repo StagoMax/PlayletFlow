@@ -1,6 +1,6 @@
 use crate::product::api;
 use crate::product::application::workspace_nodes::{
-    SaveWorkspaceObjectPromptInput, WorkspaceNodeService,
+    SaveWorkspaceObjectPromptInput, UndoWorkspaceObjectPromptInput, WorkspaceNodeService,
 };
 use crate::product::domain::{ProjectId, StoryboardId};
 use crate::product::infrastructure::sqlite::SqliteWorkspaceNodeRepository;
@@ -225,6 +225,78 @@ async fn viewing_ai_content_clears_only_the_update_that_was_displayed() {
     )
     .await;
     assert_eq!(replayed["unseenUpdateAt"], Value::Null);
+}
+
+#[tokio::test]
+async fn first_agent_prompt_save_accepts_a_null_placeholder_prompt() {
+    let fixture = TestDatabase::new();
+    let router = fixture.router();
+    let uri = fixture.collection_uri();
+    let object = send_json(
+        &router,
+        Method::POST,
+        &uri,
+        Some("empty-prompt-video"),
+        json!({ "parentId": null, "kind": "object", "name": "待写提示词", "objectType": "video" }),
+        StatusCode::CREATED,
+    )
+    .await;
+    let object_id = object["id"].as_str().unwrap();
+    send_json(
+        &router,
+        Method::POST,
+        &format!("{uri}/{object_id}/media"),
+        None,
+        Value::Null,
+        StatusCode::OK,
+    )
+    .await;
+    let service = WorkspaceNodeService::new(Arc::new(SqliteWorkspaceNodeRepository::new(
+        fixture.database.clone(),
+    )));
+    let saved = service
+        .save_object_prompt(
+            SaveWorkspaceObjectPromptInput {
+                project_id: fixture.project_id,
+                storyboard_id: fixture.storyboard_id,
+                target_id: object_id.to_owned(),
+                prompt: "牧羊犬数羊".into(),
+                expected_revision: 1,
+            },
+            "first-agent-prompt".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved.prompt, "牧羊犬数羊");
+    assert_eq!(saved.revision, 2);
+
+    let restored = service
+        .undo_object_prompt(
+            UndoWorkspaceObjectPromptInput {
+                project_id: fixture.project_id,
+                storyboard_id: fixture.storyboard_id,
+                target_id: object_id.to_owned(),
+                expected_revision: 2,
+            },
+            "undo-first-agent-prompt".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restored.prompt, "");
+    assert_eq!(restored.revision, 3);
+    assert_eq!(
+        fixture
+            .database
+            .connect()
+            .unwrap()
+            .query_row(
+                "SELECT prompt FROM media_items WHERE id = ?1",
+                [object_id],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+        ""
+    );
 }
 
 #[tokio::test]

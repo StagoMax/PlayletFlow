@@ -133,6 +133,61 @@ fn fixture_id(prefix: u8, storyboard_index: usize) -> Uuid {
     .unwrap()
 }
 
+async fn invoke(fixture: &ToolFixture, name: &str, input: Value) -> Value {
+    let result = fixture
+        .tool(name)
+        .execute(
+            ToolCall::new(name, input),
+            fixture.context(fixture.thread_id),
+        )
+        .await
+        .unwrap();
+    serde_json::from_str(&result.output).unwrap()
+}
+
+#[tokio::test]
+async fn prompt_references_use_the_visible_workspace_node_name() {
+    let fixture = ToolFixture::new();
+    let image_id = fixture_id(7, 12);
+    fixture
+        .database
+        .connect()
+        .unwrap()
+        .execute(
+            "INSERT INTO workspace_nodes \
+         (id, project_id, storyboard_id, kind, name, object_type, target_type, target_id, \
+          position, revision, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, 'object', '黄昏牧场', 'image', 'media', ?4, \
+                 'zz-visible-reference', 1, '2026-09-26T00:00:00Z', '2026-09-26T00:00:00Z')",
+            params![
+                Uuid::new_v4().to_string(),
+                DEMO_PROJECT_ID,
+                demo_storyboard_id(12),
+                image_id.to_string()
+            ],
+        )
+        .unwrap();
+    let resources = SqliteWorkspaceThreadStore::new(fixture.database.clone())
+        .list_resources(fixture.thread_id)
+        .await
+        .unwrap();
+    let sources = resources
+        .into_iter()
+        .map(|item| PromptReferenceSource {
+            id: item.id,
+            kind: item.kind,
+            name: item.name,
+            is_script: item.role.as_deref() == Some("script"),
+        })
+        .collect::<Vec<_>>();
+    let prompt =
+        compose_referenced_prompt("参考这张图", &[image_id.to_string()], &[], &sources).unwrap();
+    assert!(prompt.value.contains("@黄昏牧场"));
+    assert!(prompt
+        .value
+        .contains(&format!("- 图片「黄昏牧场」({image_id})")));
+}
+
 #[test]
 fn only_storyboard_tools_are_registered() {
     let fixture = ToolFixture::new();
@@ -154,6 +209,163 @@ fn only_storyboard_tools_are_registered() {
         assert!(schema["properties"].get("projectId").is_none());
         assert!(schema["properties"].get("storyboardId").is_none());
     }
+}
+
+#[tokio::test]
+async fn seven_tools_work_together_with_visible_scoped_references() {
+    let fixture = ToolFixture::new();
+    let search = invoke(
+        &fixture,
+        SEARCH_TOOL_NAME,
+        json!({
+            "query":"参考图 7","kind":"image"
+        }),
+    )
+    .await;
+    assert_eq!(search["total"], 1);
+    let reference_id = search["items"][0]["id"].as_str().unwrap().to_owned();
+    assert_eq!(reference_id, fixture_id(7, 12).to_string());
+    let source = invoke(
+        &fixture,
+        READ_TOOL_NAME,
+        json!({
+            "kind":"image","id":reference_id
+        }),
+    )
+    .await;
+    assert_eq!(source["status"], "ready");
+    assert_eq!(source["name"], "参考图 7");
+
+    let created = invoke(
+        &fixture,
+        CREATE_OBJECT_TOOL_NAME,
+        json!({
+            "parentId":null,"name":"七工具流程镜头","objectType":"video",
+            "prompt":"以 @参考图 7 为画面起点","referenceIds":[reference_id]
+        }),
+    )
+    .await;
+    let video_id = created["mediaId"].as_str().unwrap().to_owned();
+    assert_eq!(created["generationRequested"], false);
+    let initial = invoke(
+        &fixture,
+        READ_TOOL_NAME,
+        json!({
+            "kind":"video","id":video_id
+        }),
+    )
+    .await;
+    assert_eq!(initial["revision"], 1);
+    assert!(initial["content"]
+        .as_str()
+        .unwrap()
+        .contains(&format!("- 图片「参考图 7」({reference_id})")));
+
+    let saved = invoke(
+        &fixture,
+        SAVE_OBJECT_PROMPT_TOOL_NAME,
+        json!({
+            "targetId":video_id,"baseRevision":1,
+            "prompt":"镜头平稳推进","referenceIds":[reference_id]
+        }),
+    )
+    .await;
+    assert_eq!(saved["revision"], 2);
+    assert_eq!(saved["referenceIds"], json!([reference_id]));
+    let script = invoke(
+        &fixture,
+        READ_TOOL_NAME,
+        json!({
+            "kind":"text","id":format!("script-{}", demo_storyboard_id(12))
+        }),
+    )
+    .await;
+    let original_script = script["content"].as_str().unwrap().to_owned();
+    let text_proposal = invoke(
+        &fixture,
+        TEXT_TOOL_NAME,
+        json!({
+            "targetId":format!("script-{}", demo_storyboard_id(12)),"baseRevision":script["revision"],
+            "oldText":"林舟停在桥下短暂对峙的入口",
+            "newText":"林舟停在桥下，确认对方的位置","summary":"收紧开场"
+        }),
+    )
+    .await;
+    assert_eq!(text_proposal["status"], "pending");
+    let image_proposal = invoke(
+        &fixture,
+        IMAGE_TOOL_NAME,
+        json!({
+            "targetType":"media","targetId":fixture_id(8, 12),"baseRevision":1,
+            "proposedPrompt":"保留 @参考图 7 的光线",
+            "input":{"type":"referenceImages","mediaIds":[reference_id]},
+            "summary":"统一光线"
+        }),
+    )
+    .await;
+    assert_eq!(
+        image_proposal["proposedInput"]["mediaIds"],
+        json!([reference_id])
+    );
+    let video_proposal = invoke(
+        &fixture,
+        VIDEO_TOOL_NAME,
+        json!({
+            "targetId":video_id,"baseRevision":2,
+            "proposedPrompt":"从 @参考图 7 缓慢拉远",
+            "input":{"type":"referenceImages","mediaIds":[reference_id]},
+            "summary":"调整镜头"
+        }),
+    )
+    .await;
+    assert_eq!(video_proposal["status"], "pending");
+    assert_eq!(fixture.count("change_proposals"), 3);
+    assert_eq!(fixture.count("generation_jobs"), 0);
+    let unchanged = invoke(
+        &fixture,
+        READ_TOOL_NAME,
+        json!({
+            "kind":"text","id":demo_storyboard_id(12)
+        }),
+    )
+    .await;
+    assert_eq!(unchanged["content"], original_script);
+
+    let proposal_id = crate::product::domain::ProposalId(
+        Uuid::parse_str(video_proposal["proposalId"].as_str().unwrap()).unwrap(),
+    );
+    let applied = ProposalService::new(Arc::new(SqliteProposalRepository::new(
+        fixture.database.clone(),
+    )))
+    .apply_with_generation(
+        ProjectId(Uuid::parse_str(DEMO_PROJECT_ID).unwrap()),
+        proposal_id,
+        1,
+        2,
+        None,
+        Uuid::new_v4().to_string(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        applied.generation_job.unwrap().spec.input,
+        GenerationInputSelection::ReferenceImages {
+            media_ids: vec![MediaId(Uuid::parse_str(&reference_id).unwrap())],
+        }
+    );
+    let current = invoke(
+        &fixture,
+        READ_TOOL_NAME,
+        json!({
+            "kind":"video","id":video_id
+        }),
+    )
+    .await;
+    assert_eq!(current["revision"], 3);
+    assert!(current["content"]
+        .as_str()
+        .unwrap()
+        .contains(&format!("- 图片「参考图 7」({reference_id})")));
 }
 
 #[tokio::test]
@@ -413,6 +625,84 @@ async fn creates_prompted_media_objects_in_the_requested_folder_without_generati
     assert_eq!(video["objectType"], "video");
     assert_eq!(video["parentId"], Value::Null);
     assert_eq!(fixture.count("generation_jobs"), 0);
+}
+
+#[tokio::test]
+async fn tool_prompts_resolve_asset_ids_into_editor_references() {
+    let fixture = ToolFixture::new();
+    let reference_id = fixture_id(7, 12).to_string();
+    let created = fixture
+        .tool(CREATE_OBJECT_TOOL_NAME)
+        .execute(
+            ToolCall::new(
+                CREATE_OBJECT_TOOL_NAME,
+                json!({
+                    "parentId":null,"name":"引用视频","objectType":"video",
+                    "prompt":"跟随 @参考图 7","referenceIds":[reference_id]
+                }),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await
+        .unwrap();
+    let created: Value = serde_json::from_str(&created.output).unwrap();
+    let id = created["mediaId"].as_str().unwrap();
+    let expected_footer = format!("- 图片「参考图 7」({reference_id})");
+    let initial: String = fixture
+        .database
+        .connect()
+        .unwrap()
+        .query_row(
+            "SELECT prompt FROM media_items WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(initial.contains(&expected_footer));
+    assert_eq!(created["referenceIds"], json!([reference_id]));
+
+    let saved = fixture
+        .tool(SAVE_OBJECT_PROMPT_TOOL_NAME)
+        .execute(
+            ToolCall::new(
+                SAVE_OBJECT_PROMPT_TOOL_NAME,
+                json!({
+                    "targetId":id,"baseRevision":1,"prompt":"镜头推进","referenceIds":[reference_id]
+                }),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await
+        .unwrap();
+    let saved: Value = serde_json::from_str(&saved.output).unwrap();
+    assert_eq!(saved["referenceIds"], json!([reference_id]));
+    let current: String = fixture
+        .database
+        .connect()
+        .unwrap()
+        .query_row(
+            "SELECT prompt FROM media_items WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(current.starts_with("镜头推进 @参考图 7\n\n引用资产：\n"));
+    assert!(current.ends_with(&expected_footer));
+
+    let denied = fixture
+        .tool(SAVE_OBJECT_PROMPT_TOOL_NAME)
+        .execute(
+            ToolCall::new(
+                SAVE_OBJECT_PROMPT_TOOL_NAME,
+                json!({
+                    "targetId":id,"baseRevision":2,"prompt":"越界引用",
+                    "referenceIds":[fixture_id(7, 1)]
+                }),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await;
+    assert!(denied.is_err());
 }
 
 #[tokio::test]
@@ -681,6 +971,18 @@ async fn confirming_prompt_uses_and_reads_back_suggested_references() {
         .await
         .unwrap();
     let output: Value = serde_json::from_str(&result.output).unwrap();
+    let proposal_prompt: String = fixture
+        .database
+        .connect()
+        .unwrap()
+        .query_row(
+            "SELECT proposed_value FROM change_proposals WHERE id = ?1",
+            [output["proposalId"].as_str().unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(proposal_prompt.contains("@参考图 8"));
+    assert!(proposal_prompt.contains(&format!("- 图片「参考图 8」({})", fixture_id(8, 12))));
     let proposal_id = crate::product::domain::ProposalId(
         Uuid::parse_str(output["proposalId"].as_str().unwrap()).unwrap(),
     );

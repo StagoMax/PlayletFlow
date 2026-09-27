@@ -22,7 +22,7 @@ impl Tool for SearchStoryboardAssetsTool {
     }
 
     fn description(&self) -> &str {
-        "Search the current storyboard's text, bound assets, images, and videos by name or content. Returns stable IDs and revisions for read/edit calls; use offset for more results."
+        "Search the current storyboard's text, bound assets, images, and videos by name or content. Returns stable IDs and revisions. For prompt referenceIds use image/video IDs; assetBinding IDs are prompt targets. Use offset for more results."
     }
 
     fn schema(&self) -> Value {
@@ -121,7 +121,7 @@ impl Tool for ReadStoryboardAssetTool {
             .resources(thread_id)
             .await?
             .into_iter()
-            .find(|item| item.kind == input.kind && item.id == input.id)
+            .find(|item| item.kind == input.kind && resource_matches_id(item, &input.id))
             .ok_or(ProductError::NotFound)?;
         let payload = serde_json::to_value(item)?;
         Ok(ToolResult::text(
