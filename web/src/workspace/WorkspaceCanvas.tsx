@@ -4,6 +4,7 @@ import { workspaceComposerAssets } from "../composer/workspaceAssets";
 import type { ApplyProposalResponse, ChangeProposal } from "../productApi/generated";
 import { ProposalActions, ProposalPanel, type ProposalClient } from "../proposals";
 import { MediaPromptComposer } from "../preview/MediaPromptComposer";
+import { MediaPromptDock } from "../preview/MediaPromptDock";
 import { MediaViewer } from "../preview/MediaViewer";
 import { Icon } from "./Icons";
 import { ObjectMediaWorkspace } from "./ObjectMediaWorkspace";
@@ -74,6 +75,8 @@ export function WorkspaceCanvas({
   const item = state.selection.kind === "item"
     ? findItem([...current.assetGroups, ...current.videoGroups], state.selection.itemId)
     : null;
+  const [collapsedMediaId, setCollapsedMediaId] = useState<string | null>(null);
+  const promptCollapsed = item?.media.kind === "video" && collapsedMediaId === item.media.id;
   const emptyObject = state.selection.kind === "emptyObject"
     ? findObject(current.navigationTree, state.selection.objectId)
     : null;
@@ -189,7 +192,8 @@ export function WorkspaceCanvas({
           ) : (
             <div className="canvas-body media-canvas-body">
               <section className="media-preview-workspace" aria-label="媒体工作区">
-                <MediaViewer item={item} />
+                <MediaViewer item={item} onPreviewClick={item?.media.kind === "video"
+                  ? () => setCollapsedMediaId(item.media.id) : undefined} />
                 {mediaProposals.length > 0 ? (
                   <MediaProposalReview key={state.selection.nodeId ?? item?.id ?? "media"} count={mediaProposals.length}>
                     {mediaProposals.map((proposal) => {
@@ -221,7 +225,8 @@ export function WorkspaceCanvas({
                   </MediaProposalReview>
                 ) : null}
                 {item ? (
-                  <div className="media-prompt-dock">
+                  <MediaPromptDock collapsible={item.media.kind === "video"} collapsed={promptCollapsed}
+                    onToggle={() => setCollapsedMediaId(promptCollapsed ? null : item.media.id)}>
                     <MediaPromptComposer
                       key={item.id}
                       initialPrompt={item.media.prompt ?? ""}
@@ -241,7 +246,7 @@ export function WorkspaceCanvas({
                         imageFiles,
                       )}
                     />
-                  </div>
+                  </MediaPromptDock>
                 ) : null}
               </section>
             </div>

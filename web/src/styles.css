@@ -659,6 +659,13 @@ body.workspace-resizing, body.workspace-resizing * { cursor: col-resize !importa
 .workspace-media-proposals__reopen { width: 100%; }
 .media-prompt-dock { position: absolute; right: 0; bottom: 0; left: 0; z-index: 8; padding: 28px 18px 12px; background: linear-gradient(180deg, transparent, rgba(13, 13, 13, .48) 38%, var(--surface-media) 100%); pointer-events: none; }
 .media-prompt-dock > * { pointer-events: auto; }
+.media-prompt-dock.is-collapsible { padding-top: 4px; transition: transform .22s ease-out; }
+.media-prompt-dock.is-collapsed { transform: translateY(calc(100% - 34px)); }
+.media-prompt-dock__toggle { display: grid; place-items: center; width: 48px; height: 22px; margin: 0 auto 6px; padding: 0; color: var(--text-secondary); border: 1px solid var(--line-strong); border-radius: 8px 8px 0 0; background: var(--surface-composer); box-shadow: 0 -3px 12px rgb(0 0 0 / 20%); cursor: pointer; }
+.media-prompt-dock__toggle:hover { color: var(--text); background: var(--surface-control-hover); }
+.media-prompt-dock__toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.media-prompt-dock__toggle svg { width: 15px; height: 15px; transition: transform .22s ease-out; }
+.media-prompt-dock.is-collapsed .media-prompt-dock__toggle svg { transform: rotate(180deg); }
 .media-prompt-composer { width: min(100%, 760px); margin: 0 auto; }
 .media-prompt-composer-input { position: relative; overflow: visible; border: 0; border-radius: 0; background: transparent; }
 .media-prompt-composer textarea:disabled { opacity: .68; }
@@ -912,6 +919,9 @@ body.workspace-resizing, body.workspace-resizing * { cursor: col-resize !importa
   .object-media-upload-zone { position: relative; inset: auto; width: auto; min-height: 440px; margin: 12px; }
   .object-media-error { position: relative; inset: auto; padding: 8px 16px; }
   .media-prompt-dock { position: relative; inset: auto; padding: 12px; background: var(--surface-canvas); pointer-events: auto; }
+  .media-prompt-dock.is-collapsible { padding-top: 8px; }
+  .media-prompt-dock.is-collapsed { transform: none; }
+  .media-prompt-dock.is-collapsed .media-prompt-dock__content { display: none; }
   .canvas-header { padding: 0 16px; }
   .script-editor-actions { min-width: 0; }
   .script-editor-incoming { align-items: flex-start; flex-direction: column; }

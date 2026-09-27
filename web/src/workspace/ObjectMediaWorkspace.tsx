@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import type { GenerationJob } from "../productApi/generated";
 import { MediaPromptComposer, type MediaSubmissionState } from "../preview/MediaPromptComposer";
+import { MediaPromptDock } from "../preview/MediaPromptDock";
 import { createCloudGenerationClient } from "../generation/cloudGenerationClient";
+import { cloudGenerationMedia } from "../generation/cloudGenerationResult";
 import { uploadLocalGenerationInputs } from "../generation/localGenerationInputs";
 import { workspaceComposerAssets } from "../composer/workspaceAssets";
 import { ObjectMediaStage } from "./ObjectMediaStage";
@@ -26,6 +28,7 @@ export function ObjectMediaWorkspace({ object, proposals }: { object: WorkspaceO
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
   const [submission, setSubmission] = useState<MediaSubmissionState>({ status: "idle" });
+  const [promptCollapsed, setPromptCollapsed] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -40,6 +43,10 @@ export function ObjectMediaWorkspace({ object, proposals }: { object: WorkspaceO
           return;
         }
         if (job.status === "succeeded") {
+          if (import.meta.env.PROD && "result" in job && job.result) {
+            publishObjectMedia(object.id, cloudGenerationMedia(loaded, job));
+            return;
+          }
           const refreshed = await workspaceObjectMediaClient.get(projectId, loaded.id, controller.signal);
           if (!controller.signal.aborted) publishObjectMedia(object.id, refreshed);
           return;
@@ -111,10 +118,12 @@ export function ObjectMediaWorkspace({ object, proposals }: { object: WorkspaceO
         <ObjectMediaStage kind={kind} name={object.name} media={media} submission={submission}
           loading={loading} uploading={uploading} dragging={dragging} error={error}
           onUploadClick={() => picker.current?.click()}
+          onPreviewClick={kind === "video" ? () => setPromptCollapsed(true) : undefined}
           onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
           onDragLeave={() => setDragging(false)} onDrop={onDrop} />
         {proposals}
-        <div className="media-prompt-dock">
+        <MediaPromptDock collapsible={kind === "video"} collapsed={promptCollapsed}
+          onToggle={() => setPromptCollapsed((value) => !value)}>
           {media ? <MediaPromptComposer key={media.id} initialPrompt={media.prompt ?? ""} kind={kind}
             draftKey={`${projectId}:${media.id}`}
             media={referenceMedia} assets={composerAssets} loadModels={loadGenerationModels}
@@ -145,14 +154,16 @@ export function ObjectMediaWorkspace({ object, proposals }: { object: WorkspaceO
               const completed = job.status === "succeeded"
                 ? await workspaceObjectMediaClient.get(projectId, media.id).catch(() => null)
                 : null;
-              publishObjectMedia(object.id, completed?.status === "ready" ? completed : {
+              publishObjectMedia(object.id, import.meta.env.PROD
+                ? cloudGenerationMedia({ ...media, prompt }, job)
+                : completed?.status === "ready" ? completed : {
                 ...media, prompt, revision: job.targetRevision,
                 status: job.status === "failed" || job.status === "cancelled" ? "failed" : "processing",
                 generation: { jobId: job.id, provider: job.provider, model: job.spec.model, error: job.error },
               });
               return job;
             }} /> : null}
-        </div>
+        </MediaPromptDock>
       </section>
     </div>
   );

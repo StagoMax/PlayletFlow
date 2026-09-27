@@ -13,12 +13,13 @@ import "./preview.css";
 type MediaViewerProps = {
   item: PreviewItem | null;
   onRefreshAccess?: (mediaId: string) => void;
+  onPreviewClick?: () => void;
 };
 
-export function MediaViewer({ item, onRefreshAccess }: MediaViewerProps) {
+export function MediaViewer({ item, onRefreshAccess, onPreviewClick }: MediaViewerProps) {
   if (!item) {
     return (
-      <section className="media-viewer" aria-label="媒体预览">
+      <section className="media-viewer" aria-label="媒体预览" onClick={onPreviewClick}>
         <ViewerState icon={<Icon name="image" />} title="请选择媒体" description="从左侧选择图片或视频以查看完整预览。" />
       </section>
     );
@@ -70,7 +71,7 @@ export function MediaViewer({ item, onRefreshAccess }: MediaViewerProps) {
   }
 
   return (
-    <figure className="media-viewer" aria-label={`${media.name}媒体预览`}>
+    <figure className="media-viewer" aria-label={`${media.name}媒体预览`} onClick={onPreviewClick}>
       <div className="media-viewer-glow" style={style} />
       <div className="media-viewer-frame" style={style}>{content}</div>
     </figure>

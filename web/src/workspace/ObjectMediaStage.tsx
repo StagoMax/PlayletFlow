@@ -15,6 +15,7 @@ type ObjectMediaStageProps = {
   dragging: boolean;
   error: string;
   onUploadClick: () => void;
+  onPreviewClick?: () => void;
   onDragOver: (event: DragEvent<HTMLElement>) => void;
   onDragLeave: () => void;
   onDrop: (event: DragEvent<HTMLElement>) => void;
@@ -22,7 +23,7 @@ type ObjectMediaStageProps = {
 
 export function ObjectMediaStage({
   kind, name, media, submission, loading, uploading, dragging, error,
-  onUploadClick, onDragOver, onDragLeave, onDrop,
+  onUploadClick, onPreviewClick, onDragOver, onDragLeave, onDrop,
 }: ObjectMediaStageProps) {
   const label = kind === "video" ? "视频" : "图片";
   const submitting = submission.status === "submitting";
@@ -60,7 +61,8 @@ export function ObjectMediaStage({
   }
 
   if (media?.status === "ready") {
-    return <MediaViewer item={{ id: media.id, name, description: "", label, accent: "var(--accent)", media }} />;
+    return <MediaViewer item={{ id: media.id, name, description: "", label, accent: "var(--accent)", media }}
+      onPreviewClick={onPreviewClick} />;
   }
 
   return (
