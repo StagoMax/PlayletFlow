@@ -513,7 +513,7 @@ test("Agent 直接写入的提示词显示待查看状态并在内容展示后�
   const mediaResponse = await page.request.post(`${collection}/${created.id}/media`);
   expect(mediaResponse.ok()).toBe(true);
   const media = await mediaResponse.json() as { id: string; name: string; revision: number };
-  const agentPrompt = "镜头从村口全景缓慢推进，人物动作保持自然连贯";
+  const agentPrompt = "镜头参考 @林舟 · 面部三视图，从村口全景缓慢推进，人物动作保持自然连贯";
   const promptResponse = await page.request.patch(`/api/v1/projects/${projectId}/media/${media.id}`, {
     data: { name: media.name, prompt: agentPrompt, expectedRevision: media.revision },
   });
@@ -545,7 +545,9 @@ test("Agent 直接写入的提示词显示待查看状态并在内容展示后�
   await expect(dot).toHaveAttribute("title", "AI 内容待查看，打开后自动清除");
 
   await pending.click();
-  await expect(page.getByRole("textbox", { name: "生成提示词" })).toHaveText(agentPrompt);
+  const prompt = page.getByRole("textbox", { name: "生成提示词" });
+  await expect(prompt.locator(".inline-reference-token__label")).toHaveText("林舟 · 面部三视图");
+  await expect(prompt).toContainText("人物动作保持自然连贯");
   await expect.poll(() => viewedPayload?.seenThrough ?? null).toBe(unseenUpdateAt);
   await expect(pending.locator(".resource-tree__pending-dot")).toHaveCount(0);
 });

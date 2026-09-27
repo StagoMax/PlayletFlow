@@ -187,3 +187,21 @@ test("生成服务未配置时不会显示虚假的生成中状态", async ({ pa
   await expect(failure.getByRole("button", { name: "上传图片" })).toBeEnabled();
   await expect(page.getByRole("status", { name: "图片生成状态" })).toHaveCount(0);
 });
+
+for (const kind of ["image", "video"] as const) {
+  test(`${kind === "image" ? "图片" : "视频"}生成请求过大时显示 413 的原因`, async ({ page }) => {
+    const label = kind === "image" ? "图片" : "视频";
+    await page.goto("/?fixture=ready");
+    await createObject(page, kind === "image" ? "资产" : "视频", `${label}对象`, `过大${label}-${Date.now()}`);
+    await page.route("**/generations", async (route) => route.fulfill({
+      status: 413,
+      contentType: "text/plain",
+      body: "Payload Too Large",
+    }));
+    await page.getByRole("textbox", { name: "生成提示词" }).fill(`生成测试${label}`);
+    await page.getByRole("button", { name: `发送并生成${label}` }).click();
+    const failure = page.getByRole("alert", { name: `${label}生成失败` });
+    await expect(failure).toContainText("生成请求内容过大（HTTP 413）");
+    await expect(failure).toContainText("减少参考图片数量，或压缩图片后重试");
+  });
+}
