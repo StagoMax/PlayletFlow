@@ -240,7 +240,7 @@ pnpm exec playwright install chromium
 pnpm test:acceptance
 ```
 
-浏览器验收使用隔离端口 `8789` 和 `5174`，不会复用日常开发服务。
+浏览器验收会为每个 spec 分配独立端口和临时数据库，不会复用日常开发服务或污染其他用例。
 
 ## 📚 项目文档
 

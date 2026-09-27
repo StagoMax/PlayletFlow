@@ -6,7 +6,7 @@
 pnpm test:acceptance
 ```
 
-浏览器验收固定使用隔离端口：fixture API 为 `8789`，测试 Vite 为 `5174`。
+通过 `pnpm test:e2e` 运行时，每个 spec 都使用独立的 fixture API、Vite 端口和临时数据库。直接运行 Playwright 时默认使用 `8789` 和 `5174`，也可用 `PLAYLETFLOW_E2E_API_PORT` 与 `PLAYLETFLOW_E2E_WEB_PORT` 覆盖。
 它不会复用本地体验所使用的真实 runtime（默认 `8788`）或开发页面（默认 `5173`）。
 
 六个产品验收场景均使用确定性 fixture，并按最能暴露真实回归的边界执行：
