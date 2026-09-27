@@ -9,6 +9,11 @@ import type { WorkspaceGenerationJob } from "../workspace/workspaceClient";
 import type { GenerationImageFile } from "./generationOptions";
 import { blobBase64, fitGenerationImageBlob, prepareImageBlob } from "./imageInput";
 
+// Vercel rejects function request bodies above 4.5 MB. Base64 adds about one
+// third to image data, so leave room for the prompt and generation options.
+export const MAX_GENERATION_INPUT_BYTES = 3_000_000;
+export const MAX_GENERATION_REQUEST_BYTES = 4_200_000;
+
 export type InputPayload = {
   mediaId: string;
   mimeType: string;
@@ -54,7 +59,7 @@ export function createCloudGenerationClient(baseUrl = "/api/v1"): CloudGeneratio
             "Content-Type": "application/json",
             "Idempotency-Key": idempotencyKey,
           },
-          body: JSON.stringify({ ...request, kind, inputs }),
+          body: generationRequestBody({ ...request, kind, inputs }),
           signal,
         },
       );
@@ -73,7 +78,7 @@ export async function inputPayloads(
   signal?: AbortSignal,
 ): Promise<InputPayload[]> {
   const ids = selectedInputIds(generation);
-  const byteBudget = Math.min(8 * 1024 * 1024, Math.floor(18 * 1024 * 1024 / Math.max(1, ids.length)));
+  const byteBudget = generationInputByteBudget(ids.length);
   const byId = new Map(availableMedia.map((media) => [media.id, media]));
   const filesById = new Map(imageFiles.map((item) => [item.id, item.file]));
   return Promise.all(ids.map(async (mediaId) => {
@@ -87,6 +92,18 @@ export async function inputPayloads(
     if (!url) throw new Error("所选参考图片没有可读取的预览地址。");
     return encodedInput(mediaId, await fitGenerationImageBlob(await supportedImageBlob(url, media.mimeType, signal), byteBudget, signal));
   }));
+}
+
+export function generationInputByteBudget(imageCount: number): number {
+  return Math.floor(MAX_GENERATION_INPUT_BYTES / Math.max(1, imageCount));
+}
+
+export function generationRequestBody(body: object): string {
+  const json = JSON.stringify(body);
+  if (new TextEncoder().encode(json).byteLength > MAX_GENERATION_REQUEST_BYTES) {
+    throw new Error("生成请求过大，请减少参考图片或缩短提示词。");
+  }
+  return json;
 }
 
 async function encodedInput(mediaId: string, blob: Blob): Promise<InputPayload> {
