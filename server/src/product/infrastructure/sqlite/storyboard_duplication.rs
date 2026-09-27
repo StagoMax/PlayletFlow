@@ -69,10 +69,15 @@ pub(super) fn duplicate_storyboard(
             .collect::<Result<Vec<_>, _>>()?;
         rows
     };
+    for (id, ..) in &media {
+        media_map.insert(id.clone(), Uuid::new_v4().to_string());
+    }
     for (id, kind, role, name, prompt, mime, object, thumbnail, width, height, duration, status) in
         media
     {
-        let new_id = Uuid::new_v4().to_string();
+        let new_id = media_map[&id].clone();
+        let prompt =
+            prompt.map(|value| remap_prompt_references(&value, &media_map, &source, &target));
         let (status, object, thumbnail) = if status == "processing" {
             ("placeholder".to_owned(), None, None)
         } else {
@@ -89,7 +94,6 @@ pub(super) fn duplicate_storyboard(
                 height, duration, status, now
             ],
         )?;
-        media_map.insert(id, new_id);
     }
 
     let sections = {
@@ -165,7 +169,7 @@ pub(super) fn duplicate_storyboard(
                 new_section,
                 asset,
                 position,
-                prompt,
+                prompt.map(|value| remap_prompt_references(&value, &media_map, &source, &target)),
                 new_derived,
                 now
             ],
@@ -217,7 +221,9 @@ pub(super) fn duplicate_storyboard(
             // Media created from an empty workspace object uses the node UUID
             // as its media UUID. Preserve that identity in a copied storyboard
             // so the object keeps its upload and generation workspace.
-            let new_id = if target_type.as_deref() == Some("media")
+            let new_id = if target_type.as_deref() == Some("script") {
+                format!("script-{target}")
+            } else if target_type.as_deref() == Some("media")
                 && target_id.as_deref() == Some(id.as_str())
             {
                 media_map
@@ -228,11 +234,39 @@ pub(super) fn duplicate_storyboard(
                 Uuid::new_v4().to_string()
             };
             let new_parent = parent.as_ref().and_then(|parent| node_map.get(parent));
+            let mut copied_target_type = target_type.clone();
             let new_target = match target_type.as_deref() {
                 Some("script") => Some(target.clone()),
-                Some("media") => target_id
-                    .as_ref()
-                    .map(|id| media_map.get(id).cloned().unwrap_or_else(|| id.clone())),
+                Some("media") => {
+                    if let Some(id) = target_id.as_ref().and_then(|id| media_map.get(id)) {
+                        Some(id.clone())
+                    } else {
+                        let (known, shared) = if let Some(id) = target_id.as_ref() {
+                            transaction.query_row(
+                                "SELECT EXISTS(SELECT 1 FROM media_items WHERE id = ?1),
+                                 EXISTS(
+                                   SELECT 1 FROM media_items media
+                                   JOIN asset_bindings binding ON binding.asset_id = media.asset_id
+                                   WHERE media.id = ?1 AND media.project_id = ?2
+                                     AND media.deleted_at IS NULL
+                                     AND binding.project_id = ?2 AND binding.storyboard_id = ?3
+                                 )",
+                                params![id, project, target],
+                                |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
+                            )?
+                        } else {
+                            (false, false)
+                        };
+                        // Older fixture trees may contain navigation-only media IDs.
+                        // Keep those references, but clear a known deleted or out-of-scope target.
+                        if shared || (!known && target_id.is_some()) {
+                            target_id.clone()
+                        } else {
+                            copied_target_type = Some("empty".to_owned());
+                            None
+                        }
+                    }
+                }
                 _ => None,
             };
             transaction.execute(
@@ -248,7 +282,7 @@ pub(super) fn duplicate_storyboard(
                     kind,
                     name,
                     object_type,
-                    target_type,
+                    copied_target_type,
                     new_target,
                     position,
                     now
@@ -272,4 +306,51 @@ pub(super) fn duplicate_storyboard(
     remember(&transaction, &idempotency, &copy)?;
     transaction.commit()?;
     Ok(copy)
+}
+
+fn remap_prompt_references(
+    prompt: &str,
+    media_map: &HashMap<String, String>,
+    source_storyboard: &str,
+    target_storyboard: &str,
+) -> String {
+    const HEADER: &str = "\n\n引用资产：\n";
+    let Some((body, footer)) = prompt.rsplit_once(HEADER) else {
+        return prompt.to_owned();
+    };
+    let (references, suffix) = footer
+        .split_once("\n\n")
+        .map_or((footer, ""), |(references, suffix)| (references, suffix));
+    let source_script = format!("script-{source_storyboard}");
+    let target_script = format!("script-{target_storyboard}");
+    let mut mapped = Vec::new();
+    for line in references.lines() {
+        let Some((label, id)) = line.rsplit_once("」(") else {
+            return prompt.to_owned();
+        };
+        let Some(id) = id.strip_suffix(')') else {
+            return prompt.to_owned();
+        };
+        if !["- 图片「", "- 视频「", "- 文本「"]
+            .iter()
+            .any(|prefix| label.starts_with(prefix))
+        {
+            return prompt.to_owned();
+        }
+        let target_id = if id == source_script {
+            target_script.as_str()
+        } else {
+            media_map.get(id).map(String::as_str).unwrap_or(id)
+        };
+        mapped.push(format!("{label}」({target_id})"));
+    }
+    if mapped.is_empty() {
+        return prompt.to_owned();
+    }
+    let suffix = if suffix.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{suffix}")
+    };
+    format!("{body}{HEADER}{}{suffix}", mapped.join("\n"))
 }

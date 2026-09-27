@@ -106,14 +106,18 @@ async fn duplicate_preserves_storyboard_content_and_reorder_persists() {
     let section_id = Uuid::new_v4().to_string();
     let folder_id = Uuid::new_v4().to_string();
     let node_id = Uuid::new_v4().to_string();
+    let deleted_media_id = Uuid::new_v4().to_string();
+    let referenced_prompt = format!(
+        "参考 @Frame 和 @片段脚本\n\n引用资产：\n- 图片「Frame」({media_id})\n- 文本「片段脚本」(script-{source_id})"
+    );
     let db = rusqlite::Connection::open(&app.path).unwrap();
     db.execute(
         "INSERT INTO media_items
-         (id, project_id, storyboard_id, kind, role, name, mime_type, source_object_key,
+         (id, project_id, storyboard_id, kind, role, name, prompt, mime_type, source_object_key,
           status, created_at, updated_at)
-         VALUES (?1, ?2, ?3, 'image', 'keyframe', 'Frame', 'image/png', 'object/frame.png',
+         VALUES (?1, ?2, ?3, 'image', 'keyframe', 'Frame', ?4, 'image/png', 'object/frame.png',
                  'ready', '2026-01-01', '2026-01-01')",
-        rusqlite::params![media_id, project_id, source_id],
+        rusqlite::params![media_id, project_id, source_id, referenced_prompt],
     )
     .unwrap();
     db.execute(
@@ -131,15 +135,16 @@ async fn duplicate_preserves_storyboard_content_and_reorder_persists() {
     .unwrap();
     db.execute(
         "INSERT INTO asset_bindings
-         (id, project_id, storyboard_id, section_id, asset_id, position, derived_media_id,
+         (id, project_id, storyboard_id, section_id, asset_id, position, prompt_override, derived_media_id,
           created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, '1024', ?6, '2026-01-01', '2026-01-01')",
+         VALUES (?1, ?2, ?3, ?4, ?5, '1024', ?6, ?7, '2026-01-01', '2026-01-01')",
         rusqlite::params![
             Uuid::new_v4().to_string(),
             project_id,
             source_id,
             section_id,
             asset_id,
+            referenced_prompt,
             media_id
         ],
     )
@@ -158,6 +163,30 @@ async fn duplicate_preserves_storyboard_content_and_reorder_persists() {
          VALUES (?1, ?2, ?3, ?4, 'object', 'Frame', 'image', 'media', ?5,
                  '1024', '2026-01-01', '2026-01-01')",
         rusqlite::params![node_id, project_id, source_id, folder_id, media_id],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO media_items
+         (id, project_id, storyboard_id, kind, role, name, mime_type, status,
+          created_at, updated_at, deleted_at)
+         VALUES (?1, ?2, ?3, 'image', 'keyframe', '旧占位图', 'image/png', 'placeholder',
+                 '2026-01-01', '2026-01-01', '2026-01-01')",
+        rusqlite::params![deleted_media_id, project_id, source_id],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO workspace_nodes
+         (id, project_id, storyboard_id, parent_id, kind, name, object_type,
+          target_type, target_id, position, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'object', '旧占位图', 'image', 'media', ?5,
+                 '2048', '2026-01-01', '2026-01-01')",
+        rusqlite::params![
+            Uuid::new_v4().to_string(),
+            project_id,
+            source_id,
+            folder_id,
+            deleted_media_id
+        ],
     )
     .unwrap();
     drop(db);
@@ -188,6 +217,28 @@ async fn duplicate_preserves_storyboard_content_and_reorder_persists() {
         )
         .unwrap();
     assert_ne!(cloned_media, media_id);
+    let copied_prompt: String = db
+        .query_row(
+            "SELECT prompt FROM media_items WHERE id = ?1",
+            [&cloned_media],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let expected_prompt = referenced_prompt
+        .replace(&format!("({media_id})"), &format!("({cloned_media})"))
+        .replace(
+            &format!("(script-{source_id})"),
+            &format!("(script-{copied_id})"),
+        );
+    assert_eq!(copied_prompt, expected_prompt);
+    let binding_prompt: String = db
+        .query_row(
+            "SELECT prompt_override FROM asset_bindings WHERE storyboard_id = ?1",
+            [copied_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(binding_prompt, expected_prompt);
     let binding_media: String = db
         .query_row(
             "SELECT derived_media_id FROM asset_bindings WHERE storyboard_id = ?1",
@@ -205,6 +256,25 @@ async fn duplicate_preserves_storyboard_content_and_reorder_persists() {
         )
         .unwrap();
     assert_eq!(node_media, cloned_media);
+    let empty_copy_count: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM workspace_nodes
+             WHERE storyboard_id = ?1 AND name = '旧占位图'
+               AND target_type = 'empty' AND target_id IS NULL",
+            [copied_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(empty_copy_count, 1);
+    let script_node_id: String = db
+        .query_row(
+            "SELECT id FROM workspace_nodes
+             WHERE storyboard_id = ?1 AND target_type = 'script'",
+            [copied_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(script_node_id, format!("script-{copied_id}"));
     drop(db);
 
     let reorder_path = format!("/api/v1/projects/{project_id}/storyboards/{copied_id}/reorder");
