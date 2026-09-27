@@ -53,7 +53,7 @@
 | 弹窗 | 原生 `<dialog>` 使用 `ui-dialog`，内部使用 `ui-dialog__content`、`ui-dialog__header`、`ui-dialog__title`、`ui-dialog__description`、`ui-dialog__actions`。支持 Esc 关闭；提交中是否允许关闭由业务决定。 |
 | 状态标签 | 无边框的 `ui-badge` 搭配 `data-tone="pending|success|error|neutral"`。标签文字必须说明状态，不能只靠颜色。 |
 
-[`CreateStoryboardDialog.tsx`](../web/src/storyboards/CreateStoryboardDialog.tsx) 是第一处实际采用样板。后续资产选择器、提案弹窗和表单可以在各自功能修改时逐步采用同一配方。
+[`CreateStoryboardDialog.tsx`](../web/src/storyboards/CreateStoryboardDialog.tsx) 与 [`DeleteStoryboardDialog.tsx`](../web/src/storyboards/DeleteStoryboardDialog.tsx) 展示了片段表单及危险操作确认。删除对话框在提交前列出受影响的脚本、关键帧、视频和待确认提案；提交期间禁用重复操作，并在对话框内显示错误。
 
 ## 4. 状态与交互
 
@@ -64,6 +64,7 @@
 | 处理中 | 显示正在执行的动作和可理解的进度或等待文案；避免控件突然消失。 |
 | 成功 | 使用绿色提示与完成文案，指出结果所在位置。 |
 | 错误或冲突 | 使用红色或暖色文字、浅背景，必要时增加边界；说明原因和下一步操作，冲突不可覆盖已有内容。 |
+| 云端同步失败 | 工作区顶部显示可访问的错误提示；保留本地草稿和待同步标记，版本冲突说明需要备份或人工处理。 |
 | 空状态 | 说明当前为什么为空，以及可执行的下一步。 |
 
 悬停、按下、禁用和焦点状态必须分明。键盘焦点保持可见；图标按钮有 `aria-label`；触摸设备不能依赖悬停才能发现主要操作。尊重 `prefers-reduced-motion`。

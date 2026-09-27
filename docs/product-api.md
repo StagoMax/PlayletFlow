@@ -1,10 +1,10 @@
 # Videoflow 产品接口文档
 
-状态：第一阶段契约基线  
-版本：1.0  
+状态：本地产品接口契约；云端子集差异见第 6.3 节
+版本：1.1
 基础路径：`/api/v1`
 
-本文档定义片段工作区的产品接口。当前已经实现的通用 AgentRuntime 接口见 [runtime-api.md](./runtime-api.md)。产品路由不得写入 `server/src/runtime.rs`；运行时只在组合层注册产品工具和注入可信上下文。
+本文档以本地 SQLite 产品接口为准。云端 `VIDEOFLOW_CLOUD=1` 复用部分 `/api/v1` 路径，但使用 TOS 快照与单独的提案适配器；云端工作区和对话请求见[运行时 API](runtime-api.md)，数据归属见[轻量云工作区模块](cloud-workspace.md)。产品路由不得写入 `server/src/runtime.rs`；运行时只在组合层注册产品工具和注入可信上下文。
 
 ## 1. 通用约定
 
@@ -546,7 +546,7 @@ type WorkspaceThreadBinding = {
 };
 ```
 
-消息、历史和 SSE 继续使用现有 `/api/threads/:threadId/...` 契约。服务端发送消息前根据 `threadId` 查找绑定并构建只读 `StoryboardContext`；产品工具同样从绑定获取作用域，不接受模型提供的 `projectId` 或 `storyboardId`。
+本地消息、历史和 SSE 使用 `/api/threads/:threadId/...` 契约。服务端发送消息前根据 `threadId` 查找绑定并构建只读 `StoryboardContext`；产品工具同样从绑定获取作用域，不接受模型提供的 `projectId` 或 `storyboardId`。云端的线程绑定及历史当前保存在浏览器，发送 `/api/turn` 时由工作区密钥与服务端快照再次验证片段作用域。
 
 ### 6.2 提案列表与处理
 
@@ -608,18 +608,24 @@ type WorkspaceThreadBinding = {
 }
 ```
 
-应用流程必须在一个数据库事务内完成：锁定提案 → 验证状态和目标修订 → 更新目标 → 标记提案已应用 → 写入唯一生成任务或 outbox。调用外部生成供应商不在该事务中执行。
+本地应用流程在一个数据库事务内完成：锁定提案 → 验证状态和目标修订 → 更新目标 → 标记提案已应用 → 写入唯一生成任务或 outbox。调用外部生成供应商不在该事务中执行。
+
+### 6.3 云端轻量提案适配器
+
+云端只实现本节四个提案路径，不提供本地的 `/ai-thread` 持久绑定接口。每次请求都带 `X-Videoflow-Workspace-Key`；服务端在私有 TOS 文档内按项目和片段筛选提案。确认或取消仍提交 `expectedProposalRevision` 与 `expectedTargetRevision`，目标或提案变化返回 `409`。已应用提案的确认响应保存在提案记录中，重复确认返回该响应。
+
+媒体提案确认时，浏览器先冲刷待同步快照，并按提案所选素材构造可选的 `inputs` 图片数据；服务端通过云端生成服务创建任务，再将目标、提案状态和任务信息写回工作区文档。该路径使用 TOS 条件写入和有限重试，不具备上一节所述的 SQLite 单事务边界。云端工作区快照的 GET/PUT、修订头、大小限制与冲突码见[运行时 API](runtime-api.md#云端工作区与会话)。
 
 ## 7. AI 工具契约
 
-本地片段会话只注册以下七个工具。全部操作从 Runtime 提供的 `threadId` 解析当前项目和片段；输入不接受 `projectId`、`storyboardId` 或服务器文件路径。可信上下文包含当前片段的文件夹 ID、父级 ID 和名称。创建工具直接写入新的导航对象和媒体占位符；提示词保存工具直接更新现有工作区对象，但不触发生成；检索与读取返回当前数据库快照；三个提案工具只创建待确认提案，正式内容仍由用户确认接口修改。
+本地和云端片段会话使用同名的七个工具。工具输入不接受 `projectId`、`storyboardId` 或服务器文件路径。本地由 Runtime `threadId` 的数据库绑定推导作用域，云端由工作区密钥、请求片段和 TOS 快照校验作用域。创建工具直接写入新的导航对象和媒体占位符；提示词保存工具直接更新现有对象，但不触发生成；三个提案工具只创建待确认提案，提案内容仍由用户确认接口应用。
 
 | 工具 | 输入重点 | 结果 |
 | --- | --- | --- |
-| `create_workspace_object` | `parentId`（根目录为 `null`）、`name`、`objectType=image/video`、`prompt` | 在当前片段指定目录原子创建图片或视频对象及媒体占位符，只保存提示词，不创建生成任务；工具调用可幂等重放。 |
-| `save_workspace_object_prompt` | `targetId`、`baseRevision`、`prompt` | 把提示词直接写入现有图片或视频对象的输入框；不创建提案或生成任务，支持幂等重放和修订冲突检查。 |
+| `create_workspace_object` | `parentId`（根目录为 `null`）、`name`、`objectType=image/video`、`prompt` | 在当前片段指定目录创建图片或视频对象及媒体占位符，只保存提示词，不创建生成任务。 |
+| `save_workspace_object_prompt` | `targetId`、`baseRevision`、`prompt` | 把提示词直接写入现有图片或视频对象的输入框；不创建提案或生成任务，检查目标修订。 |
 | `search_storyboard_assets` | 可选 `query`、`kind`、`offset`、`limit` | 当前片段的文本、资产绑定、图片和视频摘要，含稳定 ID、状态和修订号；分页上限 100。 |
-| `read_storyboard_asset` | `kind`、`id` | 完整文本或提示词、状态、修订号、最近生成任务使用的图片输入。 |
+| `read_storyboard_asset` | `kind`、`id` | 完整文本或提示词、状态和修订号；本地路径还可返回最近生成任务使用的图片输入。 |
 | `propose_text_patch` | `targetId`、`baseRevision`、`oldText`、`newText`、`summary` | 对当前片段脚本执行唯一匹配的精确替换，产生待确认提案。 |
 | `propose_image_prompt_change` | `targetType=media/assetBinding`、`targetId`、`baseRevision`、`proposedPrompt`、`input`、`summary` | 图片或片段资产绑定的提示词提案及参考图选择。 |
 | `propose_video_prompt_change` | `targetId`、`baseRevision`、`proposedPrompt`、`input`、`summary` | 视频提示词提案及图片输入选择。 |
@@ -628,13 +634,15 @@ type WorkspaceThreadBinding = {
 
 工具结果返回 `proposalId`、目标、`baseRevision`、`proposedInput` 和状态。共享资产媒体在检索结果中标为只读；修改它在当前片段的提示词时使用 `assetBinding` 覆盖提案，不更新全局媒体提示词。`read_storyboard_asset` 读取文本、提示词及元数据，不读取图片像素。普通空白文本节点只有导航记录，尚无文本内容存储，因此文本补丁仅支持已持久化的片段脚本。
 
-`create_workspace_object` 是唯一直接创建产品对象的工具。`parentId` 必须来自当前片段上下文中的文件夹（或为 `null`）；服务端会再次按线程绑定校验目录作用域。创建结果的媒体状态为 `placeholder`，提示词已保存，但不会写入 `generation_jobs`。AI 回合结束后客户端刷新资源树，因此新对象会出现在左侧栏。
+`create_workspace_object` 是唯一直接创建产品对象的工具。`parentId` 必须来自当前片段的文件夹（或为 `null`）；本地由线程绑定、云端由工作区密钥和快照再次校验作用域。创建结果的媒体状态为 `placeholder`，提示词已保存，但不会写入生成任务。AI 回合结束后客户端刷新本地资源树或重读云端快照，因此新对象会出现在左侧栏。
 
-当用户只要求撰写或填入提示词时，AgentRuntime 使用 `save_workspace_object_prompt`。它只允许修改当前线程绑定片段内、由故事板拥有的图片/视频对象，原子更新提示词与修订号，不创建 `change_proposals` 或 `generation_jobs`。`propose_image_prompt_change` 与 `propose_video_prompt_change` 仅用于用户明确需要“确认后生成”的提案流程。
+本地工具用数据库记录和工具调用 ID 实现幂等重放；云端工具以 TOS 条件写入处理并发，当前未持久化逐工具调用的幂等记录。云端重试同一个创建工具可能产生第二个对象，调用方不得把这两种保证混为一谈。
+
+当用户只要求撰写或填入提示词时，AgentRuntime 使用 `save_workspace_object_prompt`。它只允许修改当前作用域内、由片段拥有的图片/视频对象，检查修订号并更新提示词，不创建提案或生成任务。`propose_image_prompt_change` 与 `propose_video_prompt_change` 用于用户明确需要“确认后生成”的提案流程。
 
 ## 8. 事件接口
 
-工作区使用一个项目级事件流补充请求/响应 API：
+本地产品工作区使用项目级事件流补充请求/响应 API：
 
 `GET /api/v1/projects/:projectId/events/stream?since=:seq`
 
@@ -674,7 +682,7 @@ type WorkspaceThreadBinding = {
 4. 连接项目事件流和现有线程事件流。
 5. 媒体缩略图进入视口时再加载，选中或悬停时获取预览访问地址。
 
-### 9.2 AI 修改提示词
+### 9.2 AI 提出“确认后生成”的提示词变更（本地）
 
 1. 用户在右侧发送消息。
 2. AgentRuntime 使用 `search_storyboard_assets` 和 `read_storyboard_asset` 确认目标及可引用图片，再调用对应的图片或视频提示词工具；若用户要求新增对象，则从可信上下文选择目录并调用 `create_workspace_object`，此路径不会发起生成。
@@ -684,10 +692,12 @@ type WorkspaceThreadBinding = {
 6. 服务端原子更新提示词、提案和生成 outbox，返回任务 ID。
 7. 后台生成适配器处理任务，项目事件流更新进度，成功后替换该片段的派生媒体。
 
+用户只要求保存提示词时，改用 `save_workspace_object_prompt`：目标内容直接更新，但不创建提案或生成任务。云端模式使用 `/api/turn`、TOS 快照和云端提案适配器，不依赖本地项目事件流；浏览器在回合结束后重读工作区。
+
 ## 10. 兼容与演进规则
 
-- 第一阶段只新增 `/api/v1` 产品接口，不破坏当前 `/api/threads` 契约。
+- 本地 `/api/v1` 产品接口不破坏 `/api/threads` 契约；云端轻量适配器另有 `/api/cloud-workspace` 与 `/api/turn`，并只覆盖一部分产品路径。
 - 可选字段可以向后兼容地增加；删除字段、改变含义或收紧枚举需要新 API 版本。
 - 工具名称和必填字段视为模型契约。本次工具集包含一个对象创建工具、一个直接提示词保存工具、两个读取工具和三个定向提案工具；既有历史工具事件仍可读取，新的模型回合只暴露当前七个工具。
 - TypeScript 类型应从一份机器可读契约生成或由契约测试校验，不能在前后端各自手写后长期漂移。
-- 本文档是语义说明；[openapi.json](./openapi.json) 是机器可读的 OpenAPI 3.1 契约，并由前端构建执行生成文件漂移检查。
+- 本文档是语义说明；[openapi.json](./openapi.json) 是本地产品 API 的机器可读 OpenAPI 3.1 契约，由前端构建执行生成文件漂移检查。云端专用 `/api/cloud-workspace` 与 `/api/turn` 的现行语义以[运行时 API](runtime-api.md)和对应路由测试为准。

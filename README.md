@@ -36,7 +36,7 @@ AI 提案 ─────→ 用户确认 / 取消 / 冲突保护
 ```
 
 > [!IMPORTANT]
-> AI 不会静默覆盖正式内容。脚本和媒体提示词的修改先形成提案，只有用户确认后才会进入正式工作区。
+> AI 对脚本和“确认后生成”的媒体改动先创建提案，由用户确认。用户明确要求创建图片/视频对象或只保存提示词时，产品工具可以直接写入当前片段；这些操作不会启动生成。
 
 ## ✨ 核心能力
 
@@ -48,7 +48,7 @@ AI 提案 ─────→ 用户确认 / 取消 / 冲突保护
 | 🎭 资产复用 | 角色、场景、道具等资产跨片段共享引用，不重复复制原始文件 |
 | 🖼️ 媒体预览 | 缩略图、悬停预览、完整画面查看、元数据和生成状态统一呈现 |
 | 🎞️ 图片/视频生成 | 接入 Seedream 与 Seedance，支持模型、比例、首尾帧和参考关键帧 |
-| 💾 本地优先 | SQLite 持久化项目、片段、资产、提案、生成任务、会话和事件 |
+| 💾 按运行模式持久化 | 本地服务使用 SQLite；云端工作区快照与提案写入私有 TOS，浏览器保留本地副本 |
 | 📐 契约驱动 | OpenAPI 是产品接口的单一事实来源，前端类型由契约生成并在构建时校验 |
 
 ## 🧩 工作流
@@ -76,66 +76,40 @@ flowchart LR
 - [Node.js](https://nodejs.org/) 22 或更高版本
 - [pnpm](https://pnpm.io/installation) 10 或更高版本
 
-### Windows：统一启动并自动恢复
-
-项目根目录提供了持久化开发主管理器。它同时监测前端和后端；自己启动的服务退出后会自动重启，已经由其他终端启动的服务则只监测、不强行结束：
-
-```powershell
-# 后台启动前后端
-.\scripts\dev.ps1 start
-
-# 查看服务归属、端口和日志目录
-.\scripts\dev.ps1 status
-
-# 重启或停止主管理器拥有的服务
-.\scripts\dev.ps1 restart
-.\scripts\dev.ps1 stop
-```
-
-运行状态与日志保存在 `.videoflow/dev/`。前端地址为 <http://127.0.0.1:5173>，后端健康检查为 <http://127.0.0.1:8788/health>。
-
-### 1. 获取代码
+### 本地体验：无需 API Key
 
 ```bash
 git clone https://github.com/StagoMax/PlayletFlow.git
 cd PlayletFlow
 ```
 
-### 2. 启动后端
-
-第一次体验可以使用固定回复的本地 Fixture，无需任何 API Key；片段示例数据不会自动写入：
+在仓库根目录打开两个终端。终端 A 启动使用固定回复的本地服务：
 
 ```bash
-cd server
-cargo run -- --fixture
+cargo run --manifest-path server/Cargo.toml -- --fixture
 ```
 
-如需恢复演示用的固定片段数据，可显式运行 `cargo run -- --fixture --seed-demo-workspace`，并在前端访问 `/?fixture=ready`。
-
-服务启动后可访问健康检查：<http://127.0.0.1:8788/health>。
-
-### 3. 启动前端
-
-打开另一个终端：
+终端 B 安装依赖并启动前端：
 
 ```bash
-cd PlayletFlow/web
+cd web
 pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-浏览器打开 <http://127.0.0.1:5173>。
+打开 <http://127.0.0.1:5173>；后端健康检查是 <http://127.0.0.1:8788/health>。Vite 默认把 `/api` 和 `/health` 转发到该后端。上述命令从仓库根目录运行时，本地 SQLite 与媒体目录位于根目录的 `.videoflow/`。
+
+`--fixture` 不会自动写入 200 个演示片段。如需验收用固定数据，改用 `cargo run --manifest-path server/Cargo.toml -- --fixture --seed-demo-workspace`，并访问 `/?fixture=ready`。
 
 ### 连接真实模型
 
 默认使用 DeepSeek 的 OpenAI 兼容端点和 `deepseek-flash`。把密钥设置在**后端进程环境**中，再以普通模式启动服务。
 
-Windows PowerShell：
+在仓库根目录用 Windows PowerShell 启动后端：
 
 ```powershell
-cd server
 $env:PLAYLETFLOW_LLM_API_KEY = Read-Host -MaskInput "DeepSeek API Key"
-cargo run
+cargo run --manifest-path server/Cargo.toml
 ```
 
 如果项目根目录已有本地 `deepseekAPI.txt`（内容为 `API_KEY=...`），可在根目录直接运行：
@@ -149,14 +123,26 @@ cargo run
 macOS / Linux：
 
 ```bash
-cd server
 read -rsp "DeepSeek API Key: " PLAYLETFLOW_LLM_API_KEY
 export PLAYLETFLOW_LLM_API_KEY
-cargo run
+cargo run --manifest-path server/Cargo.toml
 ```
 
 可以通过 `PLAYLETFLOW_LLM_BASE_URL` 和 `PLAYLETFLOW_LLM_MODEL` 覆盖默认端点及模型。
 完整配置项见 [.env.example](.env.example)。不要把服务端密钥放进 `VITE_` 变量或提交到 Git。
+
+### Windows：管理前后端开发进程
+
+需要自动重启时，在仓库根目录运行以下命令。**这一路径使用真实模型**：先运行 `pnpm install --frozen-lockfile`（在 `web/` 中），并在根目录准备仅含 `API_KEY=...` 的 `deepseekAPI.txt`；缺少该文件时后端会启动失败。无需密钥的体验请使用上面的两个终端命令。
+
+```powershell
+.\scripts\dev.ps1 start
+.\scripts\dev.ps1 status
+.\scripts\dev.ps1 restart
+.\scripts\dev.ps1 stop
+```
+
+主管理器监测 `5173` 和 `8788` 端口，自动重启它启动的进程；对已由其他终端运行的服务只监测。状态和日志位于 `.videoflow/dev/`。
 
 ### 启用图片与视频生成
 
@@ -179,6 +165,7 @@ flowchart TB
         Domain[Product Domain]
         Runtime[OpenTopia Runtime]
         Worker[Generation Worker]
+        CloudWorkspace[Cloud Workspace Adapter]
     end
 
     subgraph Storage[Storage]
@@ -195,10 +182,12 @@ flowchart TB
     Conversation --> HTTP
     Contract -. validates .-> HTTP
     HTTP --> App
+    HTTP --> CloudWorkspace
     App --> Domain
     App --> Runtime
     App --> Worker
-    Domain --> SQLite
+    App --> SQLite
+    CloudWorkspace --> Files
     Runtime --> LLM
     Worker --> Ark
     Worker --> Files
@@ -207,10 +196,10 @@ flowchart TB
 ### 设计原则
 
 - **领域规则留在服务端**：前端负责交互，不复制状态机和权限判断。
-- **AI 只能提出建议**：工具调用生成提案，不能直接篡改正式脚本或媒体目标。
-- **上下文绑定而非模型自选**：项目、片段和资源范围由会话绑定关系决定。
-- **持久事件与实时事件同源**：刷新、断线重连和实时流使用同一事件投影。
-- **外部调用可恢复**：幂等键、版本检查和生成任务状态机避免重复消费。
+- **AI 修改有明确边界**：脚本及确认后生成的媒体变更使用提案；明确要求创建对象或只保存提示词的工具直接写入当前片段，但不启动生成。
+- **上下文由服务端选定**：本地从会话绑定推导范围，云端从工作区密钥和快照校验片段；模型不能自行扩大作用域。
+- **本地持久事件与实时事件同源**：SQLite 模式刷新、断线重连和实时流使用同一事件投影；云端会话历史目前由浏览器保存。
+- **写入检查冲突**：本地用幂等键和版本检查；云端用 TOS 条件写入保护工作区快照，并保留其不同的恢复限制。
 
 ## 🗂️ 项目结构
 
@@ -224,10 +213,12 @@ PlayletFlow/
 │     │  ├─ infrastructure/    # SQLite、TOS、火山引擎适配器
 │     │  ├─ api/               # 产品 HTTP API
 │     │  └─ tools/             # AI 产品工具
+│     ├─ cloud_workspace/      # TOS 工作区、云端提案与作用域工具
 │     ├─ conversation.rs       # 会话与事件持久化
 │     └─ runtime.rs            # OpenTopia Runtime 组合
 ├─ web/                        # React / TypeScript 前端
 │  ├─ src/workspace/           # 片段工作区
+│  │  └─ cloudWorkspaceSync.ts # 云端工作区修订同步
 │  ├─ src/chat/                # 流式对话与活动时间线
 │  ├─ src/assets/              # 资产库
 │  ├─ src/proposals/           # AI 提案审阅
@@ -239,17 +230,19 @@ PlayletFlow/
 ## ✅ 测试与质量门禁
 
 ```bash
-# 后端单元测试、契约测试和持久化测试
-cd server
-cargo test --locked
+# 后端格式、静态检查和测试（仓库根目录）
+cargo fmt --manifest-path server/Cargo.toml --all -- --check
+cargo clippy --manifest-path server/Cargo.toml --all-targets --locked -- -D warnings
+cargo test --manifest-path server/Cargo.toml --locked
 
 # 前端契约检查、类型检查和生产构建
-cd ../web
+cd web
 pnpm build
 
 # 组件级用例
 pnpm test:assets-proposals
 pnpm test:preview
+pnpm test:conversation-activity
 
 # 首次执行浏览器测试前安装 Chromium
 pnpm exec playwright install chromium
@@ -267,16 +260,17 @@ pnpm test:acceptance
 | [文档索引](docs/README.md) | 推荐阅读顺序与接口契约维护 |
 | [贡献指南](CONTRIBUTING.md) | 团队协作流程、代码约定与提交检查 |
 | [当前架构](docs/architecture.md) | 模块职责、依赖方向与关键流程 |
+| [轻量云工作区](docs/cloud-workspace.md) | TOS 快照、浏览器同步、片段作用域与当前限制 |
 | [产品需求](docs/product-requirements.md) | 用户故事、交互边界和验收场景 |
 | [产品 API](docs/product-api.md) | 接口、数据结构和调用顺序 |
-| [OpenAPI 契约](docs/openapi.json) | 前后端共享的机器可读接口定义 |
-| [运行时 API](docs/runtime-api.md) | AgentRuntime、历史与 SSE 事件协议 |
+| [OpenAPI 契约](docs/openapi.json) | 本地产品 API 的机器可读接口定义 |
+| [运行时与云端工作区 API](docs/runtime-api.md) | 本地会话、历史、SSE 与云端工作区同步协议 |
 | [生成接入](docs/volcengine-generation.md) | Seedream、Seedance 与 TOS 配置 |
-| [模块与协作计划](docs/modules-and-agent-plan.md) | 模块边界、依赖关系和测试策略 |
+| [历史实施计划](docs/modules-and-agent-plan.md) | 第一阶段任务划分；当前边界以架构文档为准 |
 
 ## ☁️ 部署
 
-仓库根目录的 `vercel.json` 可以把 Vite 前端和 Rust 容器服务部署到同一域名：
+仓库根目录的 `vercel.json` 配置了 Vite 前端和 Rust 容器服务。容器以 `VIDEOFLOW_CLOUD=1` 启动；云端普通模式在启动时需要可用的私有 TOS 配置，因为工作区快照和 AI 提案要写入 TOS。部署前先按[生成与存储指南](docs/volcengine-generation.md)配置桶及所需跨域访问，再部署：
 
 ```bash
 vercel login
@@ -284,9 +278,9 @@ vercel link
 vercel deploy --prod
 ```
 
-至少需要在 Vercel 服务端环境中配置 `PLAYLETFLOW_LLM_API_KEY` 和 `PORT=3000`。
-如需云端媒体生成，再配置 `.env.example` 中的 `ARK_API_KEY` 与 `TOS_*` 变量。
-部署后先检查 `/health`，再验证一轮模型对话和 `runtime_probe` 工具调用。
+服务端至少需要 `PLAYLETFLOW_LLM_API_KEY` 与 `.env.example` 中的 `TOS_ACCESS_KEY`、`TOS_SECRET_KEY`、`TOS_BUCKET`、`TOS_REGION`、`TOS_ENDPOINT`；容器镜像已设置 `PORT=3000`。如需图片/视频生成，再配置 `ARK_API_KEY`。部署后检查 `/health`、工作区加载/保存、片段会话及一次只读资源检索。
+
+当前云端工作区用浏览器保存的随机工作区密钥定位 TOS 快照，并以存储修订号防止静默覆盖；它还没有账号体系或细粒度成员权限。会话历史保存在当前浏览器，本地上传原文件保存在该浏览器的 IndexedDB，跨设备不能保证恢复这些文件。云端同步失败会在页面显示错误；发生版本冲突时先备份本地内容，不要用旧快照覆盖云端。
 
 <details>
 <summary><strong>使用 OpenTopia Desktop 中已保存的 Provider</strong></summary>
