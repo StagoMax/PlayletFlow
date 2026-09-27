@@ -404,7 +404,7 @@ async fn stale_target_marks_proposal_conflicted_without_overwriting_user_work() 
         .reject(
             fixture.project_id,
             proposal.id,
-            2,
+            proposal.revision,
             2,
             "reject-conflict-001".into(),
         )

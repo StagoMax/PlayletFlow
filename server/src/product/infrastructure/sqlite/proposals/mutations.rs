@@ -252,14 +252,20 @@ pub(super) fn reject(
     }
     let mut proposal = mapping::find_raw(&tx, command.project_id, command.proposal_id)?
         .ok_or(ProductError::NotFound)?;
-    if proposal.revision != command.expected_proposal_revision {
+    if proposal.status == ProposalStatus::Pending {
+        reconcile(&tx, &mut proposal)?;
+    }
+    // A target edit can advance a proposal from pending to conflicted while the
+    // review remains open. Rejecting it only changes the proposal, so a stale
+    // revision from before that transition must not prevent cancellation.
+    if proposal.revision != command.expected_proposal_revision
+        && !(proposal.status == ProposalStatus::Conflicted
+            && command.expected_proposal_revision < proposal.revision)
+    {
         return Err(ProductError::RevisionConflict {
             expected: command.expected_proposal_revision,
             actual: proposal.revision,
         });
-    }
-    if proposal.status == ProposalStatus::Pending {
-        reconcile(&tx, &mut proposal)?;
     }
     if proposal.status == ProposalStatus::Expired {
         tx.commit()?;
