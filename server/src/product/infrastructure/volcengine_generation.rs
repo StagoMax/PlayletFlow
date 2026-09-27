@@ -1,3 +1,4 @@
+use super::volcengine_response::{decode, network_error};
 use crate::product::application::generation::{
     GenerationOutput, GenerationPoll, GenerationProvider, GenerationRequest, GenerationSubmission,
 };
@@ -5,7 +6,7 @@ use crate::product::domain::{
     GenerationInputRole, GenerationJob, MediaKind, ProductError, ProductResult,
 };
 use async_trait::async_trait;
-use reqwest::{Client, Response, StatusCode};
+use reqwest::Client;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
 
@@ -339,32 +340,6 @@ fn video_poll(response: VideoTaskResponse) -> ProductResult<GenerationPoll> {
             "Seedance returned an unknown task status: {status}"
         ))),
     }
-}
-
-async fn decode<T: DeserializeOwned>(response: Response) -> ProductResult<T> {
-    let status = response.status();
-    if !status.is_success() {
-        let request_id = response
-            .headers()
-            .get("x-request-id")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("unknown")
-            .to_owned();
-        let error = format!("Volcengine Ark returned HTTP {status} (request {request_id})");
-        return if status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
-            Err(ProductError::DependencyUnavailable(error))
-        } else {
-            Err(ProductError::External(error))
-        };
-    }
-    response
-        .json::<T>()
-        .await
-        .map_err(|error| ProductError::External(format!("invalid Ark response: {error}")))
-}
-
-fn network_error(error: reqwest::Error) -> ProductError {
-    ProductError::DependencyUnavailable(format!("Volcengine Ark request failed: {error}"))
 }
 
 fn ensure_https_url(url: &str) -> ProductResult<()> {

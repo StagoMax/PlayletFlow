@@ -1,7 +1,7 @@
 use super::error::ProductApiError;
 use super::media::MediaResponse;
 use crate::product::application::media::MediaCatalogService;
-use crate::product::domain::{MediaKind, ProductError, ProjectId, StoryboardId};
+use crate::product::domain::{MediaId, MediaKind, ProductError, ProjectId, StoryboardId};
 use crate::product::infrastructure::{sqlite::SqliteWorkspaceMediaRepository, LocalMediaStore};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
@@ -13,6 +13,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+const MAX_GENERATION_INPUT_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone)]
 struct StateData {
@@ -30,6 +31,10 @@ pub(super) fn router(
         .route(
             "/api/v1/projects/:project_id/storyboards/:storyboard_id/workspace-nodes/:node_id/media",
             post(ensure_media).put(upload_media),
+        )
+        .route(
+            "/api/v1/projects/:project_id/storyboards/:storyboard_id/generation-inputs/:input_id",
+            axum::routing::put(upload_generation_input),
         )
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .with_state(StateData { repository, media, store })
@@ -54,6 +59,75 @@ struct UploadParams {
     width: i64,
     height: i64,
     duration_ms: Option<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GenerationInputParams {
+    name: String,
+    width: i64,
+    height: i64,
+}
+
+async fn upload_generation_input(
+    State(state): State<StateData>,
+    Path((project, storyboard, input_id)): Path<(String, String, String)>,
+    Query(params): Query<GenerationInputParams>,
+    headers: HeaderMap,
+    bytes: Bytes,
+) -> Result<Json<MediaResponse>, ProductApiError> {
+    let project_id = ProjectId(parse_uuid("projectId", &project)?);
+    let storyboard_id = StoryboardId(parse_uuid("storyboardId", &storyboard)?);
+    let media_id = MediaId(parse_uuid("inputId", &input_id)?);
+    let store = state.store.ok_or_else(|| {
+        ProductError::DependencyUnavailable("local media storage is unavailable".into())
+    })?;
+    let mime_type = headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim();
+    if bytes.is_empty() || bytes.len() > MAX_GENERATION_INPUT_BYTES {
+        return Err(ProductError::Validation(
+            "generation input must be between 1 byte and 8 MB".into(),
+        )
+        .into());
+    }
+    if params.name.trim().is_empty() || params.name.chars().count() > 255 {
+        return Err(ProductError::Validation("generation input name is invalid".into()).into());
+    }
+    let kind = validate_upload(
+        mime_type,
+        &bytes,
+        &UploadParams {
+            width: params.width,
+            height: params.height,
+            duration_ms: None,
+        },
+    )?;
+    if kind != MediaKind::Image {
+        return Err(ProductError::Validation("generation input must be an image".into()).into());
+    }
+    let object_key = store
+        .store_generation_input(media_id, &bytes, mime_type)
+        .await?;
+    state
+        .repository
+        .insert_generation_input(
+            project_id,
+            storyboard_id,
+            media_id,
+            params.name.trim().to_owned(),
+            object_key,
+            mime_type.to_owned(),
+            params.width,
+            params.height,
+        )
+        .await?;
+    Ok(Json(state.media.get(project_id, media_id).await?.into()))
 }
 
 async fn upload_media(
@@ -146,7 +220,9 @@ fn parse_uuid(field: &str, value: &str) -> Result<Uuid, ProductApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::product::application::media::MediaCatalogService;
+    use crate::product::application::media::{
+        MediaAccessProvider, MediaCatalogService, MediaRepository,
+    };
     use crate::product::infrastructure::sqlite::{ProductDatabase, SqliteMediaRepository};
     use axum::body::{to_bytes, Body};
     use axum::http::{Method, Request, StatusCode};
@@ -195,7 +271,7 @@ mod tests {
         let app = router(
             SqliteWorkspaceMediaRepository::new(database.clone()),
             media_service,
-            Some(store),
+            Some(store.clone()),
         );
         let uri = format!(
             "/api/v1/projects/{project}/storyboards/{storyboard}/workspace-nodes/{node_id}/media"
@@ -220,7 +296,7 @@ mod tests {
             .method(Method::PUT)
             .uri(format!("{uri}?width=1&height=1"))
             .header(CONTENT_TYPE, "image/png")
-            .body(Body::from(png))
+            .body(Body::from(png.clone()))
             .unwrap();
         let response = app.clone().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -234,6 +310,7 @@ mod tests {
             .starts_with("/api/v1/media-files/uploaded/"));
 
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
@@ -257,6 +334,57 @@ mod tests {
             )
             .unwrap();
         assert_eq!(saved, ("media".into(), node_id));
+
+        let input_id = Uuid::new_v4();
+        let input_uri = format!(
+            "/api/v1/projects/{project}/storyboards/{storyboard}/generation-inputs/{input_id}?name=Reference&width=1&height=1"
+        );
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PUT)
+                        .uri(&input_uri)
+                        .header(CONTENT_TYPE, "image/png")
+                        .body(Body::from(png.clone()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                    .unwrap();
+            assert_eq!(body["id"], input_id.to_string());
+            assert_eq!(body["status"], "ready");
+        }
+        let input = SqliteMediaRepository::new(database.clone())
+            .find_media(project, MediaId(input_id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(store
+            .generation_input(&input)
+            .await
+            .unwrap()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        let mut different_png = png.clone();
+        different_png.push(0);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(&input_uri)
+                    .header(CONTENT_TYPE, "image/png")
+                    .body(Body::from(different_png))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
         let video_id = Uuid::new_v4().to_string();
         database

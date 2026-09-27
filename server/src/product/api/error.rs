@@ -76,7 +76,7 @@ impl From<ProductError> for ProductApiError {
                 message: "an internal storage error occurred".to_owned(),
                 details: json!({}),
             },
-            ProductError::External(_) => Self {
+            ProductError::External(_) | ProductError::ProviderRejected { .. } => Self {
                 status: StatusCode::BAD_GATEWAY,
                 code: "EXTERNAL_SERVICE_ERROR".to_owned(),
                 message: "an external service failed".to_owned(),

@@ -26,6 +26,26 @@ pub(super) fn find(
         .map_err(Into::into)
 }
 
+pub(super) fn latest_for_media(
+    connection: &Connection,
+    project_id: ProjectId,
+    media_id: MediaId,
+) -> ProductResult<Option<GenerationJob>> {
+    let sql = format!(
+        "SELECT {COLUMNS} FROM generation_jobs \
+         WHERE project_id = ?1 AND target_type = 'mediaPrompt' AND target_id = ?2 \
+         ORDER BY created_at DESC, id DESC LIMIT 1"
+    );
+    connection
+        .query_row(
+            &sql,
+            params![project_id.to_string(), media_id.to_string()],
+            from_row,
+        )
+        .optional()
+        .map_err(Into::into)
+}
+
 pub(super) fn find_by_id(
     connection: &Connection,
     job_id: GenerationJobId,

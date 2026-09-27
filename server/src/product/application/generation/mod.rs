@@ -152,6 +152,12 @@ pub trait GenerationRepository: Send + Sync {
         job_id: GenerationJobId,
     ) -> ProductResult<Option<GenerationJob>>;
 
+    async fn latest_for_media(
+        &self,
+        project_id: ProjectId,
+        media_id: MediaId,
+    ) -> ProductResult<Option<GenerationJob>>;
+
     async fn retry(&self, command: RetryGenerationJob) -> ProductResult<GenerationJob>;
 
     async fn request_media(&self, command: RequestMediaGeneration) -> ProductResult<GenerationJob>;
@@ -214,11 +220,29 @@ pub trait GenerationProvider: Send + Sync {
 #[derive(Clone)]
 pub struct GenerationService {
     repository: Arc<dyn GenerationRepository>,
+    provider_available: bool,
 }
 
 impl GenerationService {
     pub fn new(repository: Arc<dyn GenerationRepository>) -> Self {
-        Self { repository }
+        Self {
+            repository,
+            provider_available: true,
+        }
+    }
+
+    pub fn with_provider_available(mut self, available: bool) -> Self {
+        self.provider_available = available;
+        self
+    }
+
+    fn require_provider(&self) -> ProductResult<()> {
+        if self.provider_available {
+            return Ok(());
+        }
+        Err(ProductError::DependencyUnavailable(
+            "图片/视频生成服务未启用：请设置 ARK_API_KEY 并重启后端服务。仍可直接上传文件。".into(),
+        ))
     }
 
     pub async fn get(
@@ -232,12 +256,21 @@ impl GenerationService {
             .ok_or(ProductError::NotFound)
     }
 
+    pub async fn latest_for_media(
+        &self,
+        project_id: ProjectId,
+        media_id: MediaId,
+    ) -> ProductResult<Option<GenerationJob>> {
+        self.repository.latest_for_media(project_id, media_id).await
+    }
+
     pub async fn retry(
         &self,
         project_id: ProjectId,
         job_id: GenerationJobId,
         idempotency_key: String,
     ) -> ProductResult<GenerationJob> {
+        self.require_provider()?;
         #[derive(Serialize)]
         struct Fingerprint {
             project_id: ProjectId,
@@ -263,6 +296,7 @@ impl GenerationService {
         &self,
         input: RequestMediaGenerationInput,
     ) -> ProductResult<GenerationJob> {
+        self.require_provider()?;
         let RequestMediaGenerationInput {
             project_id,
             storyboard_id,

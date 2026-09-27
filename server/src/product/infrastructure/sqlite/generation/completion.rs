@@ -65,31 +65,79 @@ pub(super) fn mark_succeeded(
             "generation provider returned the wrong media kind".into(),
         ));
     }
-    let media_id = MediaId::new();
     let now = Utc::now();
-    tx.execute(
-        "INSERT INTO media_items \
+    // A workspace object uses its own id as its media id. Replacing that id
+    // breaks selection and refresh, so complete its current media in place.
+    let current_object_media = match job.target {
+        ProposalTarget::MediaPrompt { media_id } => tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_nodes node \
+             JOIN media_items media ON media.id = node.target_id \
+             WHERE node.id = ?1 AND node.project_id = ?2 AND node.storyboard_id = ?3 \
+               AND node.kind = 'object' AND node.target_type = 'media' \
+               AND node.target_id = ?1 AND media.revision = ?4 \
+               AND media.deleted_at IS NULL)",
+            params![
+                media_id.to_string(),
+                job.project_id.to_string(),
+                job.storyboard_id.to_string(),
+                job.target_revision
+            ],
+            |row| row.get::<_, bool>(0),
+        )?,
+        _ => false,
+    };
+    let media_id = if current_object_media {
+        let ProposalTarget::MediaPrompt { media_id } = job.target else {
+            unreachable!();
+        };
+        let changed = tx.execute(
+            "UPDATE media_items SET mime_type = ?1, source_object_key = ?2, \
+             thumbnail_object_key = NULL, width = ?3, height = ?4, duration_ms = ?5, \
+             status = 'ready', revision = revision + 1, updated_at = ?6 \
+             WHERE id = ?7 AND project_id = ?8 AND revision = ?9 AND deleted_at IS NULL",
+            params![
+                completion.output.mime_type,
+                completion.output.object_key,
+                completion.output.width,
+                completion.output.height,
+                completion.output.duration_ms,
+                now.to_rfc3339(),
+                media_id.to_string(),
+                job.project_id.to_string(),
+                job.target_revision
+            ],
+        )?;
+        if changed != 1 {
+            return Err(ProductError::NotFound);
+        }
+        media_id
+    } else {
+        let media_id = MediaId::new();
+        tx.execute(
+            "INSERT INTO media_items \
          (id, project_id, asset_id, storyboard_id, kind, role, name, prompt, mime_type, \
           source_object_key, width, height, duration_ms, status, revision, created_at, updated_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
                  'ready', 1, ?14, ?14)",
-        params![
-            media_id.to_string(),
-            job.project_id.to_string(),
-            target.asset_id,
-            target.storyboard_id,
-            completion.output.kind.as_storage_str(),
-            target.role.as_storage_str(),
-            target.name,
-            target.prompt,
-            completion.output.mime_type,
-            completion.output.object_key,
-            completion.output.width,
-            completion.output.height,
-            completion.output.duration_ms,
-            now.to_rfc3339(),
-        ],
-    )?;
+            params![
+                media_id.to_string(),
+                job.project_id.to_string(),
+                target.asset_id,
+                target.storyboard_id,
+                completion.output.kind.as_storage_str(),
+                target.role.as_storage_str(),
+                target.name,
+                target.prompt,
+                completion.output.mime_type,
+                completion.output.object_key,
+                completion.output.width,
+                completion.output.height,
+                completion.output.duration_ms,
+                now.to_rfc3339(),
+            ],
+        )?;
+        media_id
+    };
     if let ProposalTarget::AssetBindingPrompt { binding_id } = job.target {
         let changed = tx.execute(
             "UPDATE asset_bindings SET derived_media_id = ?1, revision = revision + 1, \

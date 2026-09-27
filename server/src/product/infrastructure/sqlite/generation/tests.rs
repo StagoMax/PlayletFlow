@@ -2,7 +2,8 @@ use super::SqliteGenerationRepository;
 use crate::product::application::generation::{
     resolve_generation_spec, GeneratedMediaStore, GenerationMonitor, GenerationMonitorOutcome,
     GenerationOutput, GenerationPoll, GenerationProvider, GenerationRequest, GenerationService,
-    GenerationSubmission, GenerationWorker, GenerationWorkerOutcome, StoredGenerationOutput,
+    GenerationSubmission, GenerationWorker, GenerationWorkerOutcome, RequestMediaGenerationInput,
+    StoredGenerationOutput,
 };
 use crate::product::domain::{
     GenerationJob, GenerationJobId, GenerationStatus, MediaId, MediaKind, ProductError,
@@ -23,6 +24,27 @@ struct GenerationFixture {
     path: PathBuf,
     project_id: ProjectId,
     job_id: GenerationJobId,
+}
+
+#[tokio::test]
+async fn unavailable_provider_rejects_generation_before_creating_a_job() {
+    let fixture = GenerationFixture::new();
+    let error = fixture
+        .service()
+        .with_provider_available(false)
+        .request_media(RequestMediaGenerationInput {
+            project_id: fixture.project_id,
+            storyboard_id: StoryboardId::new(),
+            media_id: MediaId::new(),
+            prompt: "test image".into(),
+            expected_revision: 1,
+            generation_options: None,
+            idempotency_key: "provider-unavailable".into(),
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ProductError::DependencyUnavailable(_)));
+    assert_eq!(fixture.scalar("SELECT COUNT(*) FROM generation_jobs"), 1);
 }
 
 impl GenerationFixture {
@@ -198,6 +220,24 @@ impl GenerationProvider for FailingProvider {
     }
 }
 
+struct RejectedProvider;
+
+#[async_trait]
+impl GenerationProvider for RejectedProvider {
+    fn name(&self) -> &str {
+        "volcengine-ark"
+    }
+
+    async fn submit(&self, _request: &GenerationRequest) -> ProductResult<GenerationSubmission> {
+        Err(ProductError::ProviderRejected {
+            status: 400,
+            code: Some("InvalidParameter".into()),
+            message: Some("unsupported duration".into()),
+            request_id: Some("ark-request-123".into()),
+        })
+    }
+}
+
 struct ImmediateImageProvider;
 
 #[async_trait]
@@ -360,6 +400,68 @@ async fn synchronous_image_result_is_persisted_and_completes_the_job() {
 }
 
 #[tokio::test]
+async fn generated_workspace_object_result_becomes_its_current_media() {
+    let fixture = GenerationFixture::new();
+    let connection = fixture.database.connect().unwrap();
+    let (storyboard_id, target_id): (String, String) = connection
+        .query_row(
+            "SELECT storyboard_id, target_id FROM generation_jobs WHERE id = ?1",
+            [fixture.job_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    let object_id = target_id.clone();
+    connection
+        .execute(
+            "INSERT INTO workspace_nodes (id, project_id, storyboard_id, kind, name, object_type, \
+         target_type, target_id, position, revision, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, 'object', 'Generated image', 'image', 'media', ?4, 'a', 1, ?5, ?5)",
+            params![
+                object_id,
+                fixture.project_id.to_string(),
+                storyboard_id,
+                target_id,
+                "2026-09-26T00:00:00+00:00"
+            ],
+        )
+        .unwrap();
+    drop(connection);
+
+    let worker = GenerationWorker::new(fixture.repository(), Arc::new(ImmediateImageProvider))
+        .with_media_store(Arc::new(TestMediaStore));
+    assert!(matches!(
+        worker.run_once().await.unwrap(),
+        GenerationWorkerOutcome::Succeeded { .. }
+    ));
+    let result_id = fixture.job().await.result_media_id.unwrap().to_string();
+    let bound_id: String = fixture
+        .database
+        .connect()
+        .unwrap()
+        .query_row(
+            "SELECT target_id FROM workspace_nodes WHERE id = ?1",
+            [object_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(bound_id, target_id);
+    assert_eq!(result_id, target_id);
+    let (status, key, revision): (String, String, i64) = fixture
+        .database
+        .connect()
+        .unwrap()
+        .query_row(
+            "SELECT status, source_object_key, revision FROM media_items WHERE id = ?1",
+            [target_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(status, "ready");
+    assert_eq!(key, format!("generated/{}.jpg", fixture.job_id));
+    assert_eq!(revision, 3);
+}
+
+#[tokio::test]
 async fn asynchronous_provider_result_is_polled_and_completes_the_job() {
     let fixture = GenerationFixture::new();
     let submitter =
@@ -457,6 +559,21 @@ async fn failed_submission_can_be_replayed_once_then_dispatched_again() {
             ..
         }
     ));
+}
+
+#[tokio::test]
+async fn provider_rejection_details_are_available_on_failed_job() {
+    let fixture = GenerationFixture::new();
+    let worker = GenerationWorker::new(fixture.repository(), Arc::new(RejectedProvider));
+    assert!(matches!(
+        worker.run_once().await.unwrap(),
+        GenerationWorkerOutcome::Failed { .. }
+    ));
+    let job = fixture.job().await;
+    let error = job.error.unwrap();
+    assert!(error.contains("InvalidParameter"));
+    assert!(error.contains("unsupported duration"));
+    assert!(error.contains("ark-request-123"));
 }
 
 #[tokio::test]

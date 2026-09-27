@@ -2,8 +2,11 @@ use crate::product::application::generation::{
     GeneratedMediaStore, GenerationOutput, StoredGenerationOutput,
 };
 use crate::product::application::media::{MediaAccessGrant, MediaAccessProvider};
-use crate::product::domain::{GenerationJobId, MediaItem, MediaKind, ProductError, ProductResult};
+use crate::product::domain::{
+    GenerationJobId, MediaId, MediaItem, MediaKind, ProductError, ProductResult,
+};
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use futures_util::StreamExt;
 use reqwest::Client;
 use std::path::{Path, PathBuf};
@@ -67,6 +70,63 @@ impl LocalMediaStore {
             .await
             .map_err(|error| ProductError::Storage(error.to_string()))?;
         Ok(object_key)
+    }
+
+    pub async fn store_generation_input(
+        &self,
+        media_id: MediaId,
+        bytes: &[u8],
+        mime_type: &str,
+    ) -> ProductResult<String> {
+        let extension = media_extension(mime_type)?;
+        let object_key = format!("{UPLOADED_PREFIX}/{media_id}.{extension}");
+        let path = self.root.join(&object_key);
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .await
+        {
+            Ok(mut file) => file
+                .write_all(bytes)
+                .await
+                .map_err(|error| ProductError::Storage(error.to_string()))?,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let existing = tokio::fs::read(&path)
+                    .await
+                    .map_err(|error| ProductError::Storage(error.to_string()))?;
+                if existing != bytes {
+                    return Err(ProductError::Validation(
+                        "generation input ID is already in use".into(),
+                    ));
+                }
+            }
+            Err(error) => return Err(ProductError::Storage(error.to_string())),
+        }
+        Ok(object_key)
+    }
+
+    async fn generation_input_url(&self, media: &MediaItem) -> ProductResult<Option<String>> {
+        let Some(key) = media
+            .source_object_key
+            .as_deref()
+            .filter(|key| safe_media_key(key))
+        else {
+            return Ok(None);
+        };
+        let bytes = tokio::fs::read(self.root.join(key))
+            .await
+            .map_err(|error| ProductError::Storage(error.to_string()))?;
+        if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
+            return Err(ProductError::Validation(
+                "generation input must be between 1 byte and 8 MB".into(),
+            ));
+        }
+        Ok(Some(format!(
+            "data:{};base64,{}",
+            media.mime_type,
+            STANDARD.encode(bytes)
+        )))
     }
 
     fn access(&self, media: &MediaItem) -> Option<MediaAccessGrant> {
@@ -169,6 +229,10 @@ impl MediaAccessProvider for LocalMediaStore {
 
     async fn preview(&self, media: &MediaItem) -> ProductResult<Option<MediaAccessGrant>> {
         Ok(self.access(media))
+    }
+
+    async fn generation_input(&self, media: &MediaItem) -> ProductResult<Option<String>> {
+        self.generation_input_url(media).await
     }
 }
 

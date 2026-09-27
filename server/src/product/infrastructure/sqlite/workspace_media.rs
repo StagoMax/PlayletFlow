@@ -13,6 +13,44 @@ impl SqliteWorkspaceMediaRepository {
         Self { database }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_generation_input(
+        &self,
+        project_id: ProjectId,
+        storyboard_id: StoryboardId,
+        media_id: MediaId,
+        name: String,
+        object_key: String,
+        mime_type: String,
+        width: i64,
+        height: i64,
+    ) -> ProductResult<()> {
+        let database = self.database.clone();
+        tokio::task::spawn_blocking(move || {
+            let connection = database.connect()?;
+            let now = chrono::Utc::now().to_rfc3339();
+            connection.execute(
+                "INSERT OR IGNORE INTO media_items (id, project_id, storyboard_id, kind, role, name, \
+                 mime_type, source_object_key, width, height, status, revision, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, 'image', 'custom', ?4, ?5, ?6, ?7, ?8, 'ready', 1, ?9, ?9)",
+                params![media_id.to_string(), project_id.to_string(), storyboard_id.to_string(),
+                    name, mime_type, object_key, width, height, now],
+            )?;
+            let matches: bool = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM media_items WHERE id = ?1 AND project_id = ?2 \
+                 AND storyboard_id = ?3 AND source_object_key = ?4 AND kind = 'image' AND status = 'ready')",
+                params![media_id.to_string(), project_id.to_string(), storyboard_id.to_string(), object_key],
+                |row| row.get(0),
+            )?;
+            if !matches {
+                return Err(ProductError::Validation("generation input ID is already in use".into()));
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|error| ProductError::Storage(error.to_string()))?
+    }
+
     pub async fn ensure(
         &self,
         project_id: ProjectId,

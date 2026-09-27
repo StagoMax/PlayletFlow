@@ -230,6 +230,15 @@ impl CloudGenerationService {
                         record.updated_at = Utc::now();
                         self.save(&record, ObjectWriteMode::Upsert).await?;
                     }
+                    Err(cause @ ProductError::ProviderRejected { .. }) => {
+                        let public_error = cause.to_string();
+                        eprintln!(
+                            "generation submission failed for {}: {public_error}",
+                            record.id
+                        );
+                        fail(&mut record, &public_error);
+                        self.save(&record, ObjectWriteMode::Upsert).await?;
+                    }
                     Err(cause) => {
                         eprintln!("generation submission failed for {}: {cause}", record.id);
                         fail(&mut record, "generation provider submission failed");

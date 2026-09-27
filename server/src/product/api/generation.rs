@@ -27,6 +27,10 @@ pub fn router(service: GenerationService) -> Router {
             get(get_generation_job),
         )
         .route(
+            "/api/v1/projects/:project_id/media/:media_id/generation-jobs/latest",
+            get(get_latest_media_generation_job),
+        )
+        .route(
             "/api/v1/projects/:project_id/generation-jobs/:job_id/retry",
             post(retry_generation_job),
         )
@@ -48,6 +52,21 @@ async fn get_generation_job(
     let project_id = ProjectId(parse_uuid("projectId", &project_id)?);
     let job_id = GenerationJobId(parse_uuid("jobId", &job_id)?);
     Ok(Json(state.service.get(project_id, job_id).await?.into()))
+}
+
+async fn get_latest_media_generation_job(
+    State(state): State<GenerationApiState>,
+    Path((project_id, media_id)): Path<(String, String)>,
+) -> Result<Json<Option<GenerationJobResponse>>, ProductApiError> {
+    let project_id = ProjectId(parse_uuid("projectId", &project_id)?);
+    let media_id = MediaId(parse_uuid("mediaId", &media_id)?);
+    Ok(Json(
+        state
+            .service
+            .latest_for_media(project_id, media_id)
+            .await?
+            .map(Into::into),
+    ))
 }
 
 async fn retry_generation_job(

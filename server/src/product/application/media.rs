@@ -91,6 +91,9 @@ pub struct MediaAccessGrant {
 pub trait MediaAccessProvider: Send + Sync {
     async fn thumbnail(&self, media: &MediaItem) -> ProductResult<Option<MediaAccessGrant>>;
     async fn preview(&self, media: &MediaItem) -> ProductResult<Option<MediaAccessGrant>>;
+    async fn generation_input(&self, media: &MediaItem) -> ProductResult<Option<String>> {
+        Ok(self.preview(media).await?.map(|grant| grant.url))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

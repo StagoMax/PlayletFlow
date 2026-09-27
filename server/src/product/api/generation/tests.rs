@@ -130,6 +130,40 @@ impl Drop for ApiFixture {
 }
 
 #[tokio::test]
+async fn latest_media_job_restores_status_after_reopening_an_object() {
+    let fixture = ApiFixture::new();
+    let route = format!(
+        "/api/v1/projects/{}/media/{}/generation-jobs/latest",
+        fixture.project_id, fixture.media_id
+    );
+    let response = fixture
+        .router()
+        .oneshot(Request::get(&route).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(body["id"], fixture.job_id.to_string());
+    assert_eq!(body["status"], "failed");
+
+    let missing = format!(
+        "/api/v1/projects/{}/media/{}/generation-jobs/latest",
+        fixture.project_id,
+        MediaId::new()
+    );
+    let response = fixture
+        .router()
+        .oneshot(Request::get(missing).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert!(body.is_null());
+}
+
+#[tokio::test]
 async fn get_and_idempotent_retry_follow_the_frozen_contract() {
     let fixture = ApiFixture::new();
     let route = format!(

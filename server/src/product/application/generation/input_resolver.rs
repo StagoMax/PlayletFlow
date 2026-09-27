@@ -53,20 +53,20 @@ impl GenerationInputResolver for MediaGenerationInputResolver {
                     "generation inputs must be ready images".into(),
                 ));
             }
-            let grant = self.access.preview(&media).await?.ok_or_else(|| {
+            let url = self.access.generation_input(&media).await?.ok_or_else(|| {
                 ProductError::DependencyUnavailable(
                     "generation input media has no provider-readable URL".into(),
                 )
             })?;
-            if !grant.url.starts_with("https://") {
+            if !url.starts_with("https://") && !url.starts_with("data:image/") {
                 return Err(ProductError::DependencyUnavailable(
-                    "generation input media URL must be externally accessible over HTTPS".into(),
+                    "generation input media must have an HTTPS URL or encoded image".into(),
                 ));
             }
             resolved.push(ResolvedGenerationInput {
                 media_id,
                 role,
-                url: grant.url,
+                url,
             });
         }
         Ok(resolved)

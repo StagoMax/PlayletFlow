@@ -12,7 +12,7 @@ use crate::product::application::generation::{
     RequestMediaGeneration, RetryGenerationJob, RunningGenerationJob,
 };
 use crate::product::domain::{
-    GenerationJob, GenerationJobId, ProductError, ProductResult, ProjectId,
+    GenerationJob, GenerationJobId, MediaId, ProductError, ProductResult, ProjectId,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -51,6 +51,15 @@ impl GenerationRepository for SqliteGenerationRepository {
         job_id: GenerationJobId,
     ) -> ProductResult<Option<GenerationJob>> {
         self.run(move |connection| mapping::find(connection, project_id, job_id))
+            .await
+    }
+
+    async fn latest_for_media(
+        &self,
+        project_id: ProjectId,
+        media_id: MediaId,
+    ) -> ProductResult<Option<GenerationJob>> {
+        self.run(move |connection| mapping::latest_for_media(connection, project_id, media_id))
             .await
     }
 

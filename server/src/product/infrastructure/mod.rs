@@ -3,6 +3,7 @@ mod media_access;
 pub mod sqlite;
 mod tos_object_storage;
 mod volcengine_generation;
+mod volcengine_response;
 
 pub use generation_adapter::WaitingForProviderAdapter;
 pub use media_access::{LocalMediaStore, MetadataOnlyMediaAccessProvider};

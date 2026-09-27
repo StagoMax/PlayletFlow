@@ -132,6 +132,12 @@ impl GenerationWorker {
                 self.repository.defer_claim(claim).await?;
                 Ok(GenerationWorkerOutcome::WaitingForProvider { job_id })
             }
+            Err(error @ ProductError::ProviderRejected { .. }) => {
+                let public_error = error.to_string();
+                eprintln!("generation provider submission failed for {job_id}: {public_error}");
+                self.fail_submission_with_error(claim, public_error).await?;
+                Ok(GenerationWorkerOutcome::Failed { job_id })
+            }
             Err(error) => {
                 eprintln!("generation provider submission failed for {job_id}: {error}");
                 self.fail_submission(claim).await?;
@@ -141,12 +147,17 @@ impl GenerationWorker {
     }
 
     async fn fail_submission(&self, claim: super::ClaimedGenerationJob) -> ProductResult<()> {
+        self.fail_submission_with_error(claim, PUBLIC_SUBMISSION_ERROR.into())
+            .await
+    }
+
+    async fn fail_submission_with_error(
+        &self,
+        claim: super::ClaimedGenerationJob,
+        public_error: String,
+    ) -> ProductResult<()> {
         self.repository
-            .mark_submission_failed(
-                claim,
-                self.provider.name().to_owned(),
-                PUBLIC_SUBMISSION_ERROR.into(),
-            )
+            .mark_submission_failed(claim, self.provider.name().to_owned(), public_error)
             .await?;
         Ok(())
     }

@@ -153,6 +153,10 @@ impl From<ProductError> for ApiError {
                 eprintln!("generation integration failed: {message}");
                 Self::new(StatusCode::BAD_GATEWAY, "generation request failed")
             }
+            ProductError::ProviderRejected { .. } => {
+                eprintln!("generation provider rejected request: {error}");
+                Self::new(StatusCode::BAD_GATEWAY, "generation request failed")
+            }
         }
     }
 }
