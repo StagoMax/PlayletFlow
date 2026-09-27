@@ -6,14 +6,16 @@ export function useConversationScroll({
   messageCount,
   latestEventSeq,
   loadingOlder,
+  initialPosition = "latest",
 }: {
   messageCount: number;
   latestEventSeq: number;
   loadingOlder: boolean;
+  initialPosition?: "start" | "latest";
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const pinnedRef = useRef(true);
+  const pinnedRef = useRef(initialPosition === "latest");
   const beforeOlderHeight = useRef<number | null>(null);
   const wasLoadingOlder = useRef(false);
   const scrollFrame = useRef(0);
@@ -39,6 +41,9 @@ export function useConversationScroll({
       scrollFrame.current = requestAnimationFrame(() => {
         const element = scrollRef.current;
         if (element && pinnedRef.current) element.scrollTop = element.scrollHeight;
+        if (element && !pinnedRef.current) {
+          setAwayFromLatest(element.scrollHeight - element.clientHeight - element.scrollTop > latestThreshold);
+        }
       });
     });
     observer.observe(content);

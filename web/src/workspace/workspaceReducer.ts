@@ -1,10 +1,34 @@
-import type { WorkspaceAction, WorkspaceState } from "./types";
+import type { WorkspaceAction, WorkspaceSnapshot, WorkspaceState } from "./types";
 
-export function createWorkspaceState(storyboardId: string): WorkspaceState {
-  return {
+const stateKey = (projectId: string) => `videoflow:workspace-view:v1:${projectId}`;
+
+export function createWorkspaceState(data: WorkspaceSnapshot): WorkspaceState {
+  const storyboardId = data.initialStoryboardId;
+  const initial = {
     currentStoryboardId: storyboardId,
-    selection: { kind: "script", storyboardId },
+    selection: data.initialSelection ?? { kind: "script" as const, storyboardId },
   };
+  try {
+    const stored = window.localStorage.getItem(stateKey(data.project.id));
+    if (!stored) return initial;
+    const parsed = JSON.parse(stored) as WorkspaceState;
+    if (!data.workspaces[parsed.currentStoryboardId]) return initial;
+    const selection = parsed.selection;
+    if (selection.kind === "script" && selection.storyboardId !== parsed.currentStoryboardId) return initial;
+    if (selection.kind === "item" && typeof selection.itemId !== "string") return initial;
+    if (selection.kind === "emptyObject" && typeof selection.objectId !== "string") return initial;
+    return parsed;
+  } catch {
+    return initial;
+  }
+}
+
+export function rememberWorkspaceState(projectId: string, state: WorkspaceState) {
+  try {
+    window.localStorage.setItem(stateKey(projectId), JSON.stringify(state));
+  } catch {
+    // Browsers with disabled storage still keep the current in-memory selection.
+  }
 }
 
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {

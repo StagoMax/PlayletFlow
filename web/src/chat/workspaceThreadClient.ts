@@ -1,6 +1,7 @@
 import type { WorkspaceThreadBinding } from "../productApi/generated";
 import type { Thread } from "../types";
 import { fetchWithTimeout } from "../http/fetchWithTimeout";
+import { seedWelcomeConversation } from "./welcomeConversation";
 
 export type { WorkspaceThreadBinding } from "../productApi/generated";
 
@@ -80,6 +81,7 @@ export function createFixtureWorkspaceThreadClient(runtime: RuntimeThreadCreator
   const keyFor = (scope: WorkspaceThreadScope) =>
     `videoflow:workspace-thread:v1:${scope.projectId}:${scope.storyboardId}`;
   const readBindings = (scope: WorkspaceThreadScope) => {
+    seedWelcomeConversation(scope.projectId, scope.storyboardId);
     const key = keyFor(scope);
     const cached = bindings.get(key);
     if (cached) return cached;

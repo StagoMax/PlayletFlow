@@ -1,4 +1,4 @@
-import type { Project, StoryboardDetail, StoryboardSummary } from "../productApi/generated";
+import type { MediaItem, Project, StoryboardDetail, StoryboardSummary } from "../productApi/generated";
 import type { PreviewItem } from "../preview/types";
 
 export type NavigatorItem = PreviewItem & {
@@ -49,6 +49,8 @@ export type WorkspaceSnapshot = {
   storyboards: StoryboardSummary[];
   workspaces: Record<string, StoryboardWorkspace>;
   initialStoryboardId: string;
+  initialSelection?: WorkspaceSelection;
+  objectMedia?: Record<string, MediaItem>;
 };
 
 export type WorkspaceSelection = (

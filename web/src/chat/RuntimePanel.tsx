@@ -27,6 +27,24 @@ function scopeKey(scope: WorkspaceThreadScope) {
   return `${scope.projectId}:${scope.storyboardId}`;
 }
 
+function rememberedThread(scope: WorkspaceThreadScope) {
+  const key = scopeKey(scope);
+  const inMemory = activeThreadIds.get(key);
+  if (inMemory) return inMemory;
+  try { return window.localStorage.getItem(`videoflow:active-thread:v1:${key}`); }
+  catch { return null; }
+}
+
+function rememberThread(scope: WorkspaceThreadScope, threadId: string | null) {
+  const key = scopeKey(scope);
+  if (threadId) activeThreadIds.set(key, threadId);
+  else activeThreadIds.delete(key);
+  try {
+    if (threadId) window.localStorage.setItem(`videoflow:active-thread:v1:${key}`, threadId);
+    else window.localStorage.removeItem(`videoflow:active-thread:v1:${key}`);
+  } catch { /* In-memory selection still works when storage is unavailable. */ }
+}
+
 function initialCreateKey(scope: WorkspaceThreadScope) {
   const key = scopeKey(scope);
   let value = initialCreateKeys.get(key);
@@ -101,9 +119,9 @@ export function RuntimePanel({
           : [await client.create(scope, initialCreateKey(scope), controller.signal)];
         const runtimeTitles = await readRuntimeThreadTitles(api);
         if (version === requestVersion.current) {
-          const remembered = activeThreadIds.get(scopeKey(scope));
+          const remembered = rememberedThread(scope);
           const active = next.some((item) => item.threadId === remembered) ? remembered! : next[0].threadId;
-          activeThreadIds.set(scopeKey(scope), active);
+          rememberThread(scope, active);
           setBindings(next);
           setActiveThreadId(active);
           setThreadTitles(runtimeTitles);
@@ -145,7 +163,7 @@ export function RuntimePanel({
       );
       const runtimeTitles = await readRuntimeThreadTitles(api);
       if (version === requestVersion.current) {
-        activeThreadIds.set(scopeKey({ projectId, storyboardId, storyboardName }), next.threadId);
+        rememberThread({ projectId, storyboardId, storyboardName }, next.threadId);
         setBindings((current) => [next, ...current.filter((item) => item.threadId !== next.threadId)]);
         setActiveThreadId(next.threadId);
         setThreadTitles(runtimeTitles);
@@ -171,7 +189,7 @@ export function RuntimePanel({
   const binding = bindings.find((item) => item.threadId === activeThreadId) ?? null;
 
   function selectThread(threadId: string) {
-    activeThreadIds.set(scopeKey({ projectId, storyboardId, storyboardName }), threadId);
+    rememberThread({ projectId, storyboardId, storyboardName }, threadId);
     setActiveThreadId(threadId);
   }
 
@@ -198,16 +216,16 @@ export function RuntimePanel({
       if (activeThreadId !== threadId) return;
       if (remaining.length > 0) {
         const nextId = remaining[0].threadId;
-        activeThreadIds.set(scopeKey(scope), nextId);
+        rememberThread(scope, nextId);
         setActiveThreadId(nextId);
         return;
       }
-      activeThreadIds.delete(scopeKey(scope));
+      rememberThread(scope, null);
       setActiveThreadId(null);
       setLoading(true);
       const replacement = await client.create(scope, crypto.randomUUID(), controller.signal);
       if (version !== requestVersion.current) return;
-      activeThreadIds.set(scopeKey(scope), replacement.threadId);
+      rememberThread(scope, replacement.threadId);
       setBindings([replacement]);
       setActiveThreadId(replacement.threadId);
       const titles = await readRuntimeThreadTitles(api);

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import type { MediaItem } from "../productApi/generated";
 import { findTreeNode } from "./resourceTree";
 import { workspaceObjectMediaClient } from "./workspaceObjectMediaClient";
+import { cloudGenerationMedia } from "../generation/cloudGenerationResult";
 import type { WorkspaceTreeNode } from "./types";
 
 export function useObjectMediaPolling(
@@ -35,6 +36,10 @@ export function useObjectMediaPolling(
           const job = await workspaceObjectMediaClient.getGenerationJob(projectId, jobId, controller.signal);
           if (controller.signal.aborted) return;
           if (job.status === "succeeded") {
+            if (import.meta.env.PROD && "result" in job && job.result) {
+              publish(objectId, cloudGenerationMedia(media, job));
+              return;
+            }
             const result = await workspaceObjectMediaClient.ensure(projectId, storyboardId, objectId, controller.signal);
             if (!controller.signal.aborted) publish(objectId, result);
           } else if (job.status === "failed" || job.status === "cancelled") {

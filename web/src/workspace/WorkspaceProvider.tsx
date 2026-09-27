@@ -15,11 +15,12 @@ import type {
 } from "./types";
 import { appendTreeNode, findTreeNode, mediaBackedObjectIds, nodeContainsSelection } from "./resourceTree";
 import { workspaceObjectMediaClient } from "./workspaceObjectMediaClient";
+import { saveBrowserObjectMedia } from "./browserWorkspaceStorage";
 import { useObjectMediaPolling } from "./useObjectMediaPolling";
 import { withStoryboardOrder, withoutStoryboard } from "./storyboardOrder";
 import type { WorkspaceClient } from "./workspaceClient";
 import type { WorkspaceGenerationJob } from "./workspaceClient";
-import { createWorkspaceState, workspaceReducer } from "./workspaceReducer";
+import { createWorkspaceState, rememberWorkspaceState, workspaceReducer } from "./workspaceReducer";
 import { WorkspaceContext } from "./WorkspaceContext";
 
 type WorkspaceProviderProps = {
@@ -30,7 +31,11 @@ type WorkspaceProviderProps = {
 
 export function WorkspaceProvider({ client, data: initialData, children }: WorkspaceProviderProps) {
   const [data, setData] = useState(initialData);
-  const [objectMedia, setObjectMedia] = useState<Record<string, MediaItem>>({});
+  const [objectMedia, setObjectMedia] = useState<Record<string, MediaItem>>(initialData.objectMedia ?? {});
+  useEffect(() => {
+    if (!import.meta.env.PROD) return;
+    for (const [objectId, media] of Object.entries(objectMedia)) saveBrowserObjectMedia(objectId, media);
+  }, [objectMedia]);
   const publishObjectMedia = useCallback((objectId: string, media: MediaItem) => {
     setObjectMedia((current) => {
       const previous = current[objectId];
@@ -71,7 +76,8 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
       };
     });
   }, [publishObjectMedia]);
-  const [state, dispatch] = useReducer(workspaceReducer, data.initialStoryboardId, createWorkspaceState);
+  const [state, dispatch] = useReducer(workspaceReducer, initialData, createWorkspaceState);
+  useEffect(() => rememberWorkspaceState(data.project.id, state), [data.project.id, state]);
   useObjectMediaPolling(
     data.project.id,
     state.currentStoryboardId,

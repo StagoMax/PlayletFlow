@@ -7,6 +7,7 @@ import { ConversationTurn } from "./ConversationTurn";
 import { projectConversationTurns } from "./conversationTurnModel";
 import { useConversation } from "./useConversation";
 import { useConversationScroll } from "./useConversationScroll";
+import { isWelcomeConversationUntouched, welcomeThreadId } from "./welcomeConversation";
 import "./conversation.css";
 
 type ConversationProps = {
@@ -60,6 +61,7 @@ export function Conversation({
     messageCount: visibleMessages.length,
     latestEventSeq: state.events.at(-1)?.seq ?? 0,
     loadingOlder: state.loadingOlder,
+    initialPosition: threadId === welcomeThreadId && isWelcomeConversationUntouched() ? "start" : "latest",
   });
 
   function loadOlder() {
@@ -72,8 +74,9 @@ export function Conversation({
     if (!content || busy) return;
     if (!state.messages.some((message) => message.role === "user")) onFirstPrompt(content);
     setDraft("");
+    scroll.scrollToLatest();
     void store.send(submission);
-  }, [busy, onFirstPrompt, state.messages, store]);
+  }, [busy, onFirstPrompt, scroll, state.messages, store]);
   const stop = useCallback(() => void store.cancel(), [store]);
 
   return (
