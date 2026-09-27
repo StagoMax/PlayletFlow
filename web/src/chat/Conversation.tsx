@@ -87,9 +87,6 @@ export function Conversation({
               {state.loadingOlder ? "加载中…" : "加载更早消息"}
             </button>
           ) : null}
-          {!state.loading && visibleMessages.length === 0 ? (
-            <div className="empty-state"><h2>当前片段会话已就绪</h2><p>你可以让 AI 阅读当前片段并提出修改建议。</p></div>
-          ) : null}
           {turns.map((turn) => (
             <ConversationTurn
               key={turn.key}

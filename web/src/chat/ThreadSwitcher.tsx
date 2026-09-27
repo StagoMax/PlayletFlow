@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "../workspace/Icons";
 import type { WorkspaceThreadBinding } from "./workspaceThreadClient";
 import { conversationHeaderTitle, displayThreadTitle } from "../threadTitle";
@@ -11,11 +12,20 @@ type ThreadSwitcherProps = {
   threadTitles: Readonly<Record<string, string>>;
   disabled?: boolean;
   onSelect: (threadId: string) => void;
+  onDelete: (threadId: string) => void;
 };
 
 type MarqueeStyle = CSSProperties & {
   "--thread-title-shift": string;
   "--thread-title-duration": string;
+};
+
+type ThreadContextMenu = {
+  threadId: string;
+  title: string;
+  x: number;
+  y: number;
+  trigger: HTMLButtonElement;
 };
 
 function ScrollableTitle({ title }: { title: string }) {
@@ -59,10 +69,14 @@ export function ThreadSwitcher({
   threadTitles,
   disabled = false,
   onSelect,
+  onDelete,
 }: ThreadSwitcherProps) {
   const [open, setOpen] = useState(false);
+  const [context, setContext] = useState<ThreadContextMenu | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const contextRef = useRef<HTMLDivElement>(null);
+  const contextButtonRef = useRef<HTMLButtonElement>(null);
   const activeBinding = bindings.find((item) => item.threadId === activeThreadId);
   const activeTitle = conversationHeaderTitle(
     displayThreadTitle(
@@ -72,24 +86,62 @@ export function ThreadSwitcher({
   );
 
   useEffect(() => {
-    if (!open) return;
+    if (!open && !context) return;
     const closeFromOutside = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (contextRef.current?.contains(target)) return;
+      if (!rootRef.current?.contains(target)) setOpen(false);
+      setContext(null);
     };
     const closeFromKeyboard = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      event.preventDefault();
+      if (context) {
+        setContext(null);
+        context.trigger.focus();
+        return;
+      }
       setOpen(false);
       triggerRef.current?.focus();
     };
+    const closeFromViewportChange = () => setContext(null);
     document.addEventListener("pointerdown", closeFromOutside);
     document.addEventListener("keydown", closeFromKeyboard);
+    window.addEventListener("resize", closeFromViewportChange);
+    window.addEventListener("scroll", closeFromViewportChange, true);
     return () => {
       document.removeEventListener("pointerdown", closeFromOutside);
       document.removeEventListener("keydown", closeFromKeyboard);
+      window.removeEventListener("resize", closeFromViewportChange);
+      window.removeEventListener("scroll", closeFromViewportChange, true);
     };
-  }, [open]);
+  }, [open, context]);
 
-  useEffect(() => setOpen(false), [storyboardName]);
+  useLayoutEffect(() => {
+    if (context) contextButtonRef.current?.focus();
+  }, [context]);
+
+  useEffect(() => {
+    setOpen(false);
+    setContext(null);
+  }, [storyboardName]);
+
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false);
+      setContext(null);
+    }
+  }, [disabled]);
+
+  function openContextMenu(threadId: string, title: string, trigger: HTMLButtonElement, x: number, y: number) {
+    setContext({
+      threadId,
+      title,
+      trigger,
+      x: Math.max(8, Math.min(x, window.innerWidth - 168)),
+      y: Math.max(8, Math.min(y, window.innerHeight - 52)),
+    });
+  }
 
   return (
     <div ref={rootRef} className="thread-switcher">
@@ -101,7 +153,10 @@ export function ThreadSwitcher({
         aria-expanded={open}
         aria-label={`切换对话，当前：${activeTitle}`}
         disabled={disabled || bindings.length === 0}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          setContext(null);
+          setOpen((current) => !current);
+        }}
       >
         <ScrollableTitle title={activeTitle} />
         <Icon name="chevron-down" className="thread-trigger-chevron" />
@@ -118,9 +173,22 @@ export function ThreadSwitcher({
                 type="button"
                 role="menuitemradio"
                 aria-checked={selected}
+                aria-haspopup="menu"
                 data-thread-id={binding.threadId}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  openContextMenu(binding.threadId, title, event.currentTarget, event.clientX, event.clientY);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+                    event.preventDefault();
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    openContextMenu(binding.threadId, title, event.currentTarget, rect.left + 24, rect.bottom);
+                  }
+                }}
                 onClick={() => {
                   onSelect(binding.threadId);
+                  setContext(null);
                   setOpen(false);
                 }}
               >
@@ -130,6 +198,28 @@ export function ThreadSwitcher({
             );
           })}
         </div>
+      ) : null}
+      {context ? createPortal(
+        <div
+          ref={contextRef}
+          className="thread-context-menu"
+          role="menu"
+          aria-label={`${context.title}的操作`}
+          style={{ left: context.x, top: context.y }}
+        >
+          <button
+            ref={contextButtonRef}
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setContext(null);
+              if (!window.confirm(`确定删除会话“${context.title}”？删除后无法恢复。`)) return;
+              setOpen(false);
+              onDelete(context.threadId);
+            }}
+          >删除会话</button>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );

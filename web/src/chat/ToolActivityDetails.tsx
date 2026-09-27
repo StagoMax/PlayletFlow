@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { ToolResult } from "../types";
 import { Icon } from "../workspace/Icons";
 import { eventTime, formatDuration, type ToolActivity, type ToolActivityGroup } from "./conversationActivityModel";
+import { toolGroupPresentation, toolPresentation } from "./toolActivityPresentation";
 
 export const ToolActivityDetails = memo(function ToolActivityDetails({
   group,
@@ -25,13 +26,18 @@ export const ToolActivityDetails = memo(function ToolActivityDetails({
     if (running) setOpen(true);
   }, [running]);
 
+  if (group.tools.length === 1) {
+    return <ToolActivityItem tool={group.tools[0]} threadId={threadId} now={now} />;
+  }
+
+  const presentation = toolGroupPresentation(group.group, group.tools.length);
   return (
     <details className="activity-entry tool-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
-        <span className={`activity-entry-dot ${running ? "is-running" : "is-complete"}`} aria-hidden="true" />
-        <span>{running ? "正在调用工具" : "工具调用"}</span>
-        <small>{group.tools.length} 项 · {formatDuration(endedAt - startedAt)}</small>
-        <Icon name="chevron-down" />
+        <span className="activity-entry-icon" data-icon={presentation.icon} aria-hidden="true"><Icon name={presentation.icon} /></span>
+        <span>{presentation.title}</span>
+        <small>{formatDuration(endedAt - startedAt)}</small>
+        <span className="activity-entry-chevron"><Icon name="chevron-down" /></span>
       </summary>
       <div className="activity-entry-body tool-group-body">
         {group.tools.map((tool) => (
@@ -48,6 +54,7 @@ function ToolActivityItem({ tool, threadId, now }: { tool: ToolActivity; threadI
   const [error, setError] = useState<string | null>(null);
   const startedAt = eventTime(tool.started) ?? now;
   const endedAt = eventTime(tool.finished) ?? now;
+  const presentation = toolPresentation(tool.call);
 
   async function showDetail() {
     if (!tool.finished || detail || loading) return;
@@ -65,9 +72,10 @@ function ToolActivityItem({ tool, threadId, now }: { tool: ToolActivity; threadI
   return (
     <details className="tool-card">
       <summary>
-        <span>{tool.call.name}</span>
+        <span className="tool-card-icon" data-icon={presentation.icon} aria-hidden="true"><Icon name={presentation.icon} /></span>
+        <span title={tool.call.name}>{presentation.title}</span>
         <small>{tool.finished ? "已完成" : "运行中"} · {formatDuration(endedAt - startedAt)}</small>
-        <Icon name="chevron-down" />
+        <span className="tool-card-chevron"><Icon name="chevron-down" /></span>
       </summary>
       <div className="tool-card-body">
         <div className="tool-section-label">输入</div>

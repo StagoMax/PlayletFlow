@@ -90,7 +90,8 @@ export class ConversationStore {
       this.stream = stream;
       for (const type of streamedEventTypes) {
         stream.addEventListener(type, (message) => {
-          this.receive(JSON.parse((message as MessageEvent).data) as AgentEvent);
+          const event = parseStreamedAgentEvent(message);
+          if (event) this.receive(event);
         });
       }
       stream.onerror = (event) => {
@@ -299,6 +300,22 @@ function projectActiveTurn(events: AgentEvent[]) {
 
 function turnIsTerminal(events: AgentEvent[], turnId: string) {
   return events.some((event) => event.turnId === turnId && terminalEventTypes.has(event.payload.type));
+}
+
+function parseStreamedAgentEvent(message: Event): AgentEvent | null {
+  // EventSource reserves `error` for transport failures, while the runtime also
+  // emits a persisted business event named `error`. Native transport events are
+  // plain Event objects without data and must remain on the reconnect path.
+  if (!(message instanceof MessageEvent) || typeof message.data !== "string" || !message.data) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(message.data) as AgentEvent;
+  } catch (error) {
+    console.warn("Ignored malformed conversation stream event.", error);
+    return null;
+  }
 }
 
 function errorMessage(error: unknown) {

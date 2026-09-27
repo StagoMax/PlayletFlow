@@ -1,59 +1,95 @@
-import type { StoryboardWorkspace, WorkspaceTreeNode } from "../workspace/types";
+import type { MediaItem } from "../productApi/generated";
+import type {
+  NavigatorItem,
+  StoryboardWorkspace,
+  WorkspaceObjectNode,
+  WorkspaceTreeNode,
+} from "../workspace/types";
 import type { ComposerAssetReference } from "./types";
 
-export function workspaceComposerAssets(workspace: StoryboardWorkspace): ComposerAssetReference[] {
-  const mediaAssets = [...workspace.assetGroups, ...workspace.videoGroups]
-    .flatMap((group) => group.items)
-    .map((item): ComposerAssetReference => ({
-      id: item.id,
-      kind: item.media.kind,
-      name: item.name,
-      mediaId: item.media.id,
-      thumbnailUrl: item.media.thumbnail?.url,
-      durationMs: item.media.durationMs,
-      selection: { kind: "item", itemId: item.id },
-      previewMedia: {
-        kind: item.media.kind,
-        status: item.media.status,
-        width: item.media.width,
-        height: item.media.height,
-        durationMs: item.media.durationMs,
-        mimeType: item.media.mimeType,
-        thumbnail: item.media.thumbnail,
-        preview: item.media.preview,
-      },
-    }));
-
-  const textAssets: ComposerAssetReference[] = [
-    {
-      id: `script-${workspace.storyboard.id}`,
-      kind: "text",
-      name: "片段脚本",
-      textPreview: compactText(workspace.storyboard.script.text),
-      selection: { kind: "script", storyboardId: workspace.storyboard.id },
-    },
-    ...emptyTextAssets(workspace.navigationTree),
-  ];
-
-  return uniqueById([...mediaAssets, ...textAssets]);
+export function workspaceComposerAssets(
+  workspace: StoryboardWorkspace,
+  objectMedia: Readonly<Record<string, MediaItem>> = {},
+): ComposerAssetReference[] {
+  const itemsById = new Map(
+    [...workspace.assetGroups, ...workspace.videoGroups]
+      .flatMap((group) => group.items)
+      .map((item) => [item.id, item]),
+  );
+  const assets: ComposerAssetReference[] = [{
+    id: `script-${workspace.storyboard.id}`,
+    kind: "text",
+    name: "片段脚本",
+    textPreview: compactText(workspace.storyboard.script.text),
+    selection: { kind: "script", storyboardId: workspace.storyboard.id },
+  }];
+  collectTreeAssets(workspace.navigationTree, itemsById, objectMedia, assets);
+  return uniqueById(assets);
 }
 
-function emptyTextAssets(nodes: WorkspaceTreeNode[]): ComposerAssetReference[] {
-  const assets: ComposerAssetReference[] = [];
+function collectTreeAssets(
+  nodes: readonly WorkspaceTreeNode[],
+  itemsById: ReadonlyMap<string, NavigatorItem>,
+  objectMedia: Readonly<Record<string, MediaItem>>,
+  assets: ComposerAssetReference[],
+) {
   for (const node of nodes) {
     if (node.kind === "folder") {
-      assets.push(...emptyTextAssets(node.children));
-    } else if (node.objectType === "text" && node.selection.kind === "emptyObject") {
-      assets.push({
-        id: node.id,
-        kind: "text",
-        name: node.name,
-        textPreview: "尚未填写内容",
-        selection: node.selection,
-      });
+      collectTreeAssets(node.children, itemsById, objectMedia, assets);
+      continue;
     }
+    const asset = assetFromNode(node, itemsById, objectMedia);
+    if (asset) assets.push(asset);
   }
-  return assets;
+}
+
+function assetFromNode(
+  node: WorkspaceObjectNode,
+  itemsById: ReadonlyMap<string, NavigatorItem>,
+  objectMedia: Readonly<Record<string, MediaItem>>,
+): ComposerAssetReference | null {
+  const selection = { ...node.selection, nodeId: node.id };
+  if (node.selection.kind === "script") return null;
+  if (node.objectType === "text") {
+    return {
+      id: node.id,
+      kind: "text",
+      name: node.name,
+      textPreview: "尚未填写内容",
+      selection,
+    };
+  }
+  const media = node.selection.kind === "item"
+    ? itemsById.get(node.selection.itemId)?.media
+    : objectMedia[node.id];
+  if (!media) return null;
+  return mediaAsset(node.name, media, selection);
+}
+
+function mediaAsset(
+  name: string,
+  media: MediaItem,
+  selection: ComposerAssetReference["selection"],
+): ComposerAssetReference {
+  return {
+    id: media.id,
+    kind: media.kind,
+    name,
+    mediaId: media.id,
+    thumbnailUrl: media.thumbnail?.url,
+    durationMs: media.durationMs,
+    selection,
+    previewMedia: {
+      kind: media.kind,
+      status: media.status,
+      width: media.width,
+      height: media.height,
+      durationMs: media.durationMs,
+      mimeType: media.mimeType,
+      thumbnail: media.thumbnail,
+      preview: media.preview,
+    },
+  };
 }
 
 function compactText(value: string) {

@@ -17,6 +17,7 @@ export interface WorkspaceThreadClient {
     idempotencyKey: string,
     signal: AbortSignal,
   ): Promise<WorkspaceThreadBinding>;
+  delete(scope: WorkspaceThreadScope, threadId: string, signal: AbortSignal): Promise<void>;
 }
 
 type RuntimeThreadCreator = {
@@ -29,6 +30,10 @@ function pathFor(scope: WorkspaceThreadScope) {
 
 function listPathFor(scope: WorkspaceThreadScope) {
   return `/api/v1/projects/${encodeURIComponent(scope.projectId)}/storyboards/${encodeURIComponent(scope.storyboardId)}/ai-threads`;
+}
+
+function threadPathFor(scope: WorkspaceThreadScope, threadId: string) {
+  return `${listPathFor(scope)}/${encodeURIComponent(threadId)}`;
 }
 
 async function errorMessage(response: Response) {
@@ -58,10 +63,19 @@ export function createHttpWorkspaceThreadClient(): WorkspaceThreadClient {
       if (!response.ok) throw new Error(await errorMessage(response));
       return response.json() as Promise<WorkspaceThreadBinding>;
     },
+    async delete(scope, threadId, signal) {
+      const response = await fetchWithTimeout(threadPathFor(scope, threadId), {
+        method: "DELETE",
+        signal,
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+    },
   };
 }
 
-export function createFixtureWorkspaceThreadClient(runtime: RuntimeThreadCreator): WorkspaceThreadClient {
+export function createFixtureWorkspaceThreadClient(runtime: RuntimeThreadCreator & {
+  deleteThread(threadId: string): Promise<void>;
+}): WorkspaceThreadClient {
   const bindings = new Map<string, WorkspaceThreadBinding[]>();
   const keyFor = (scope: WorkspaceThreadScope) =>
     `videoflow:workspace-thread:v1:${scope.projectId}:${scope.storyboardId}`;
@@ -101,6 +115,15 @@ export function createFixtureWorkspaceThreadClient(runtime: RuntimeThreadCreator
       bindings.set(key, next);
       localStorage.setItem(key, JSON.stringify(next));
       return binding;
+    },
+    async delete(scope, threadId) {
+      const current = readBindings(scope);
+      if (!current.some((binding) => binding.threadId === threadId)) throw new Error("会话不存在");
+      await runtime.deleteThread(threadId);
+      const next = current.filter((binding) => binding.threadId !== threadId);
+      const key = keyFor(scope);
+      localStorage.setItem(key, JSON.stringify(next));
+      bindings.set(key, next);
     },
   };
 }

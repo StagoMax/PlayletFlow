@@ -6,12 +6,18 @@ export type AssetMentionQuery = {
   query: string;
 };
 
-export function findAssetMentionQuery(value: string, caret: number): AssetMentionQuery | null {
+type AtomicTextRange = Pick<AssetMentionQuery, "start" | "end">;
+
+export function findAssetMentionQuery(
+  value: string,
+  caret: number,
+  atomicRanges: readonly AtomicTextRange[] = [],
+): AssetMentionQuery | null {
   const beforeCaret = value.slice(0, caret);
-  const match = beforeCaret.match(/(?:^|\s)@([^\s@]*)$/u);
+  const match = beforeCaret.match(/@([^\s@]*)$/u);
   if (!match || match.index === undefined) return null;
-  const atOffset = match[0].lastIndexOf("@");
-  const start = match.index + atOffset;
+  const start = match.index;
+  if (atomicRanges.some((range) => start < range.end && caret > range.start)) return null;
   return { start, end: caret, query: match[1] };
 }
 

@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { ComposerAssetReference } from "../composer/types";
 import { Conversation } from "./Conversation";
 import { ThreadSwitcher } from "./ThreadSwitcher";
+import { forgetConversation } from "./useConversation";
 import type {
   WorkspaceThreadBinding,
   WorkspaceThreadClient,
@@ -51,8 +52,10 @@ export function RuntimePanel({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [runtimeModel, setRuntimeModel] = useState<string | null>(null);
+  const [fixtureRuntime, setFixtureRuntime] = useState(false);
   const [runtimeModelLoading, setRuntimeModelLoading] = useState(true);
   const requestVersion = useRef(0);
   const activeRequest = useRef<AbortController | null>(null);
@@ -61,7 +64,10 @@ export function RuntimePanel({
     let active = true;
     void api.runtimeInfo()
       .then((info) => {
-        if (active) setRuntimeModel(info.model);
+        if (active) {
+          setRuntimeModel(info.model);
+          setFixtureRuntime(info.mode === "fixture");
+        }
       })
       .catch(() => {
         if (active) setRuntimeModel(null);
@@ -84,6 +90,8 @@ export function RuntimePanel({
     setThreadTitles({});
     setError(null);
     setLoading(true);
+    setCreating(false);
+    setDeletingThreadId(null);
     const scope = { projectId, storyboardId, storyboardName };
     void (async () => {
       try {
@@ -122,7 +130,7 @@ export function RuntimePanel({
   }, [client, connectionAttempt, projectId, storyboardId, storyboardName]);
 
   async function createThread() {
-    if (creating) return;
+    if (creating || deletingThreadId) return;
     const version = ++requestVersion.current;
     const controller = new AbortController();
     activeRequest.current?.abort();
@@ -167,6 +175,55 @@ export function RuntimePanel({
     setActiveThreadId(threadId);
   }
 
+  async function deleteThread(threadId: string) {
+    if (deletingThreadId || creating || !bindings.some((item) => item.threadId === threadId)) return;
+    const scope = { projectId, storyboardId, storyboardName };
+    const version = ++requestVersion.current;
+    const controller = new AbortController();
+    activeRequest.current?.abort();
+    activeRequest.current = controller;
+    setDeletingThreadId(threadId);
+    setError(null);
+    try {
+      await client.delete(scope, threadId, controller.signal);
+      forgetConversation(threadId);
+      if (version !== requestVersion.current) return;
+      const remaining = bindings.filter((item) => item.threadId !== threadId);
+      setBindings(remaining);
+      setThreadTitles((current) => {
+        const next = { ...current };
+        delete next[threadId];
+        return next;
+      });
+      if (activeThreadId !== threadId) return;
+      if (remaining.length > 0) {
+        const nextId = remaining[0].threadId;
+        activeThreadIds.set(scopeKey(scope), nextId);
+        setActiveThreadId(nextId);
+        return;
+      }
+      activeThreadIds.delete(scopeKey(scope));
+      setActiveThreadId(null);
+      setLoading(true);
+      const replacement = await client.create(scope, crypto.randomUUID(), controller.signal);
+      if (version !== requestVersion.current) return;
+      activeThreadIds.set(scopeKey(scope), replacement.threadId);
+      setBindings([replacement]);
+      setActiveThreadId(replacement.threadId);
+      const titles = await readRuntimeThreadTitles(api);
+      if (version === requestVersion.current) setThreadTitles(titles);
+    } catch (cause) {
+      if (!controller.signal.aborted && version === requestVersion.current) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    } finally {
+      if (version === requestVersion.current) {
+        setDeletingThreadId(null);
+        setLoading(false);
+      }
+    }
+  }
+
   const titleFromFirstPrompt = useCallback((prompt: string) => {
     if (!activeThreadId) return;
     const threadId = activeThreadId;
@@ -191,8 +248,9 @@ export function RuntimePanel({
           activeThreadId={activeThreadId}
           storyboardName={storyboardName}
           threadTitles={threadTitles}
-          disabled={loading}
+          disabled={loading || deletingThreadId !== null}
           onSelect={selectThread}
+          onDelete={(threadId) => void deleteThread(threadId)}
         />
         <button
           className="new-thread"
@@ -200,9 +258,9 @@ export function RuntimePanel({
           aria-label={creating ? "正在创建新对话" : "新建对话"}
           title="新建对话"
           onClick={() => void createThread()}
-          disabled={creating || loading}
+          disabled={creating || loading || deletingThreadId !== null}
         >
-          <Icon name="square-pen" /> <span className="sr-only">{creating ? "创建中…" : "新建对话"}</span>
+          <Icon name="message-plus" /> <span className="sr-only">{creating ? "创建中…" : "新建对话"}</span>
         </button>
       </div>
       {error ? (
@@ -211,6 +269,11 @@ export function RuntimePanel({
           <button type="button" onClick={() => setConnectionAttempt((attempt) => attempt + 1)}>
             重新连接
           </button>
+        </div>
+      ) : null}
+      {fixtureRuntime ? (
+        <div role="status" className="runtime-fixture-warning">
+          当前连接的是演示后端，只会固定回显消息，不会调用真实模型或分镜工具。
         </div>
       ) : null}
       {loading ? <div className="center-note">正在连接当前片段会话…</div> : null}

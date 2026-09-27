@@ -1,14 +1,16 @@
 import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { formatDuration } from "../preview/formatMedia";
+import { HoverPreview } from "../preview/HoverPreview";
 import { Icon } from "../workspace/Icons";
 import type { AssetMentionQuery } from "./assetMention";
+import { editorCaretAnchor } from "./contentEditableSelection";
 import type { ComposerAssetKind, ComposerAssetReference } from "./types";
 import "./composer.css";
 
 type MentionMenuProps = {
   id: string;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  editorRef: RefObject<HTMLDivElement | null>;
   mention: AssetMentionQuery;
   assets: readonly ComposerAssetReference[];
   kind: "all" | ComposerAssetKind;
@@ -34,7 +36,7 @@ const kindOptions: Array<{ kind: ComposerAssetKind; label: string }> = [
 
 export function AssetMentionMenu({
   id,
-  textareaRef,
+  editorRef,
   mention,
   assets,
   kind,
@@ -86,19 +88,19 @@ export function AssetMentionMenu({
   useLayoutEffect(() => () => cancelPreviewClose(), []);
 
   useLayoutEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    const update = () => setAnchor(textareaCaretAnchor(textarea, mention.end));
+    const editor = editorRef.current;
+    if (!editor) return;
+    const update = () => setAnchor(editorCaretAnchor(editor, mention.end));
     update();
-    textarea.addEventListener("scroll", update);
+    editor.addEventListener("scroll", update);
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
     return () => {
-      textarea.removeEventListener("scroll", update);
+      editor.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [mention.end, textareaRef]);
+  }, [editorRef, mention.end]);
 
   useLayoutEffect(() => {
     const main = mainRef.current;
@@ -232,8 +234,8 @@ function AssetList({
   const isActiveList = activeIndex !== null;
   return (
     <div id={id} className="asset-mention-list" role={isActiveList ? "listbox" : undefined} aria-label={isActiveList ? "可引用资产" : undefined}>
-      {assets.map((asset, index) => (
-        <button
+      {assets.map((asset, index) => {
+        const option = <button
           key={asset.id}
           type="button"
           role={isActiveList ? "option" : undefined}
@@ -246,8 +248,20 @@ function AssetList({
           <span className="asset-mention-copy">
             <strong>{asset.name}</strong>
           </span>
-        </button>
-      ))}
+        </button>;
+        return asset.previewMedia ? (
+          <HoverPreview
+            key={asset.id}
+            item={{ name: asset.name, media: asset.previewMedia }}
+            placement="top"
+            openDelayMs={180}
+            className="asset-mention-hover"
+            panelClassName="asset-mention-hover-panel"
+          >
+            {option}
+          </HoverPreview>
+        ) : option;
+      })}
       {assets.length === 0 ? <p>{emptyLabel}</p> : null}
     </div>
   );
@@ -338,41 +352,4 @@ function clamp(value: number, min: number, max: number) {
 
 function kindLabel(kind: ComposerAssetKind) {
   return kind === "image" ? "图片" : kind === "video" ? "视频" : "文本";
-}
-
-function textareaCaretAnchor(textarea: HTMLTextAreaElement, caret: number): Anchor {
-  const style = getComputedStyle(textarea);
-  const rect = textarea.getBoundingClientRect();
-  const mirror = document.createElement("div");
-  const properties = [
-    "fontFamily", "fontSize", "fontWeight", "fontStyle", "letterSpacing", "lineHeight",
-    "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
-    "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
-    "boxSizing", "wordSpacing", "textIndent", "textTransform", "tabSize",
-  ] as const;
-  mirror.style.position = "fixed";
-  mirror.style.left = `${rect.left}px`;
-  mirror.style.top = `${rect.top}px`;
-  mirror.style.width = `${rect.width}px`;
-  mirror.style.height = `${rect.height}px`;
-  mirror.style.visibility = "hidden";
-  mirror.style.whiteSpace = "pre-wrap";
-  mirror.style.overflowWrap = "break-word";
-  mirror.style.overflow = "hidden";
-  for (const property of properties) mirror.style[property] = style[property];
-  mirror.textContent = textarea.value.slice(0, caret);
-  const marker = document.createElement("span");
-  marker.textContent = textarea.value.slice(caret) || "\u200b";
-  mirror.append(marker);
-  document.body.append(mirror);
-  mirror.scrollTop = textarea.scrollTop;
-  mirror.scrollLeft = textarea.scrollLeft;
-  const markerRect = marker.getBoundingClientRect();
-  mirror.remove();
-  const lineHeight = Number.parseFloat(style.lineHeight) || 18;
-  return {
-    left: markerRect.left,
-    top: markerRect.top,
-    bottom: markerRect.top + Math.max(markerRect.height, lineHeight),
-  };
 }

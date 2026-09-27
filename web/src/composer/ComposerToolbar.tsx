@@ -3,8 +3,9 @@ import { Icon, type IconName } from "../workspace/Icons";
 import "./composer.css";
 
 type ComposerToolbarProps = {
-  onAttach: () => void;
+  onAttach?: () => void;
   onMention: () => void;
+  leadingControls?: ReactNode;
   controls?: ReactNode;
   action: {
     type: "button" | "submit";
@@ -17,28 +18,31 @@ type ComposerToolbarProps = {
   };
 };
 
-export function ComposerToolbar({ onAttach, onMention, controls, action }: ComposerToolbarProps) {
+export function ComposerToolbar({ onAttach, onMention, leadingControls, controls, action }: ComposerToolbarProps) {
   return (
     <div className="composer-toolbar">
       <div className="composer-toolbar__start">
-        <button
-          type="button"
-          className="composer-toolbar__button"
-          onClick={onAttach}
-          aria-label="添加附件"
-          title="添加图片、视频或文本附件"
-        >
-          <Icon name="plus" />
-        </button>
+        {onAttach ? (
+          <button
+            type="button"
+            className="composer-toolbar__button"
+            onClick={onAttach}
+            aria-label="添加附件"
+            title="添加图片、视频或文本附件"
+          >
+            <Icon name="plus" />
+          </button>
+        ) : null}
         <button
           type="button"
           className="composer-toolbar__button is-at"
-          onClick={onMention}
+          onClick={() => onMention()}
           aria-label="引用资产"
           title="引用资产"
         >
           @
         </button>
+        {leadingControls}
       </div>
       <div className="composer-toolbar__end">
         {controls}

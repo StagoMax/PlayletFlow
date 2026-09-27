@@ -1,8 +1,7 @@
 import { memo, useEffect, useId, useState, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Icon } from "../workspace/Icons";
 import { formatDuration, type TurnActivityProjection } from "./conversationActivityModel";
+import { MarkdownContent } from "./MarkdownContent";
 import { ToolActivityDetails } from "./ToolActivityDetails";
 
 export const TurnActivityTimeline = memo(function TurnActivityTimeline({
@@ -16,7 +15,7 @@ export const TurnActivityTimeline = memo(function TurnActivityTimeline({
   const [expanded, setExpanded] = useState(activity.active || activity.phase.tone === "error");
   const now = useRunningClock(activity.active);
   const elapsed = (activity.endedAt ?? now) - activity.startedAt;
-  const hasEntries = Boolean(activity.reasoning || activity.commentary || activity.toolGroups.length);
+  const hasEntries = activity.entries.length > 0;
   const state = activity.phase.tone;
   const label = state === "complete" ? "已处理" : activity.phase.label;
 
@@ -47,18 +46,21 @@ export const TurnActivityTimeline = memo(function TurnActivityTimeline({
 
       {hasEntries && expanded ? (
         <div className="turn-activity-body" id={bodyId} aria-live={activity.active ? "polite" : undefined}>
-          {activity.reasoning ? (
-            <ActivityDisclosure label="Reasoning" meta={`${activity.reasoning.length} 字`} active={activity.active}>
-              <div className="activity-plain-text">{activity.reasoning}</div>
+          {activity.entries.map((entry) => entry.kind === "tool-group" ? (
+            <ToolActivityDetails key={entry.key} group={entry} threadId={threadId} now={now} />
+          ) : entry.kind === "commentary" ? (
+            <div key={entry.key} className="activity-narrative" aria-label="处理说明">
+              <MarkdownContent text={entry.text} />
+            </div>
+          ) : (
+            <ActivityDisclosure
+              key={entry.key}
+              label="Reasoning"
+              meta={`${entry.text.length} 字`}
+              active={activity.active}
+            >
+              <div className="activity-plain-text">{entry.text}</div>
             </ActivityDisclosure>
-          ) : null}
-          {activity.commentary ? (
-            <ActivityDisclosure label="Commentary" active={activity.active}>
-              <div className="activity-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{activity.commentary}</ReactMarkdown></div>
-            </ActivityDisclosure>
-          ) : null}
-          {activity.toolGroups.map((group) => (
-            <ToolActivityDetails key={group.key} group={group} threadId={threadId} now={now} />
           ))}
         </div>
       ) : null}
@@ -100,7 +102,7 @@ function ActivityDisclosure({
         <span className={`activity-entry-dot ${active ? "is-running" : "is-complete"}`} aria-hidden="true" />
         <span>{label}</span>
         {meta ? <small>{meta}</small> : null}
-        <Icon name="chevron-down" />
+        <span className="activity-entry-chevron"><Icon name="chevron-down" /></span>
       </summary>
       <div className="activity-entry-body">{children}</div>
     </details>

@@ -23,9 +23,3 @@ export type ComposerAttachment = {
   textPreview?: string;
   file: File;
 };
-
-export type ComposerModelOption = {
-  id: string;
-  label: string;
-  description?: string;
-};

@@ -6,17 +6,20 @@ import {
   replaceAssetMention,
   type AssetMentionQuery,
 } from "./assetMention";
+import { editorSelection, focusEditorAt } from "./contentEditableSelection";
+import { inlineReferenceSegments } from "./inlineReferences";
 import type { ComposerAssetKind, ComposerAssetReference } from "./types";
 
 type UseAssetMentionOptions = {
   value: string;
   assets: readonly ComposerAssetReference[];
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  references: readonly ComposerAssetReference[];
+  editorRef: RefObject<HTMLDivElement | null>;
   onChange: (value: string) => void;
   onReference: (asset: ComposerAssetReference) => void;
 };
 
-export function useAssetMention({ value, assets, textareaRef, onChange, onReference }: UseAssetMentionOptions) {
+export function useAssetMention({ value, assets, references, editorRef, onChange, onReference }: UseAssetMentionOptions) {
   const listboxId = useId();
   const [mention, setMention] = useState<AssetMentionQuery | null>(null);
   const [kind, setKind] = useState<"all" | ComposerAssetKind>("all");
@@ -36,11 +39,14 @@ export function useAssetMention({ value, assets, textareaRef, onChange, onRefere
   const close = useCallback(() => setMention(null), []);
 
   const onTextChange = useCallback((nextValue: string, caret: number) => {
-    const nextMention = findAssetMentionQuery(nextValue, caret);
+    const atomicRanges = inlineReferenceSegments(nextValue, references)
+      .filter((segment) => segment.type === "reference")
+      .map((segment) => ({ start: segment.start, end: segment.end }));
+    const nextMention = findAssetMentionQuery(nextValue, caret, atomicRanges);
     setMention(nextMention);
     setKind("all");
     setActiveIndex(0);
-  }, []);
+  }, [references]);
 
   const selectAsset = useCallback((asset: ComposerAssetReference) => {
     if (!mention) return;
@@ -49,12 +55,11 @@ export function useAssetMention({ value, assets, textareaRef, onChange, onRefere
     onReference(asset);
     setMention(null);
     requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(next.caret, next.caret);
+      if (editorRef.current) focusEditorAt(editorRef.current, next.caret);
     });
-  }, [mention, onChange, onReference, textareaRef, value]);
+  }, [editorRef, mention, onChange, onReference, value]);
 
-  const onKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
     if (!mention) return false;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -75,23 +80,20 @@ export function useAssetMention({ value, assets, textareaRef, onChange, onRefere
     return false;
   }, [activeIndex, mention, selectAsset, visibleAssets]);
 
-  const openAtCaret = useCallback(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const prefix = start === 0 || /\s/u.test(value[start - 1] ?? "") ? "@" : " @";
-    const nextValue = `${value.slice(0, start)}${prefix}${value.slice(end)}`;
-    const caret = start + prefix.length;
+  const openAtCaret = useCallback((initialKind: "all" | ComposerAssetKind = "all") => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const { start, end } = editorSelection(editor);
+    const nextValue = `${value.slice(0, start)}@${value.slice(end)}`;
+    const caret = start + 1;
     onChange(nextValue);
     setMention({ start: caret - 1, end: caret, query: "" });
-    setKind("all");
+    setKind(initialKind);
     setActiveIndex(0);
     requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(caret, caret);
+      if (editorRef.current) focusEditorAt(editorRef.current, caret);
     });
-  }, [onChange, textareaRef, value]);
+  }, [editorRef, onChange, value]);
 
   return {
     isOpen: mention !== null,
@@ -103,7 +105,7 @@ export function useAssetMention({ value, assets, textareaRef, onChange, onRefere
     menu: mention ? (
       <AssetMentionMenu
         id={listboxId}
-        textareaRef={textareaRef}
+        editorRef={editorRef}
         mention={mention}
         assets={queryAssets}
         kind={kind}

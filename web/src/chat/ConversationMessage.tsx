@@ -1,10 +1,9 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { Message } from "../types";
 import type { ComposerAssetReference } from "../composer/types";
 import { Icon } from "../workspace/Icons";
 import { messageClipboardText } from "./conversationTurnModel";
+import { MarkdownContent } from "./MarkdownContent";
 import { MessageReferenceChip } from "./MessageReferenceChip";
 import { workspaceReferenceFromPart } from "./workspaceReference";
 
@@ -62,7 +61,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       <div className="message-content">
         {interrupted ? <div className="assistant-response-state">回答已停止，以下为已生成内容</div> : null}
         <div className="message-body" aria-live={streaming ? "polite" : undefined}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+          <MarkdownContent text={text} />
           {streaming ? <span className="stream-cursor" aria-hidden="true" /> : null}
         </div>
         {!streaming ? <MessageActions text={text} /> : null}

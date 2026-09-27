@@ -8,6 +8,7 @@ export const cloudMode = import.meta.env.PROD;
 export type RuntimeInfo = {
   status: string;
   runtime: string;
+  mode: "fixture" | "live";
   model: string | null;
 };
 

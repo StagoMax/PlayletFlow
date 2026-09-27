@@ -1,4 +1,5 @@
-import type { AgentEvent, ToolCall, ToolResult } from "../types";
+import type { AgentEvent, Message, ToolCall, ToolResult } from "../types";
+import { toolPresentation, type ToolGroupKind } from "./toolActivityPresentation";
 
 export type ToolActivity = {
   call: ToolCall;
@@ -9,9 +10,18 @@ export type ToolActivity = {
 
 export type ToolActivityGroup = {
   key: string;
-  round: number;
+  kind: "tool-group";
+  group: ToolGroupKind;
   tools: ToolActivity[];
 };
+
+export type ActivityTextEntry = {
+  key: string;
+  kind: "commentary" | "reasoning";
+  text: string;
+};
+
+export type ActivityEntry = ActivityTextEntry | ToolActivityGroup;
 
 export type RuntimePhase = {
   label: string;
@@ -21,13 +31,11 @@ export type RuntimePhase = {
 
 export type TurnActivityProjection = {
   active: boolean;
-  commentary: string;
-  reasoning: string;
+  entries: ActivityEntry[];
   liveAnswer: string;
   phase: RuntimePhase;
   startedAt: number;
   endedAt?: number;
-  toolGroups: ToolActivityGroup[];
 };
 
 const providerEventTypes = new Set([
@@ -49,23 +57,29 @@ export function projectTurnActivity(events: AgentEvent[], cancelling = false): T
   const active = !terminal;
   const startedAt = eventTime(ordered[0]) ?? Date.now();
   const endedAt = eventTime(terminal);
-  const toolGroups = projectToolGroups(ordered);
-  const reasoning = joinDeltas(ordered, "reasoning_delta");
-  const { commentary, liveAnswer } = projectModelText(ordered, Boolean(finished), Boolean(cancelled || error));
+  const finalAnswerDeltas = findFinalAnswerDeltas(ordered);
+  const liveAnswerDeltas = findLiveAnswerDeltas(ordered, finalAnswerDeltas);
+  const entries = projectActivityEntries(ordered, finalAnswerDeltas, liveAnswerDeltas);
+  const liveAnswer = ordered
+    .filter((event) => liveAnswerDeltas.has(event.seq))
+    .map((event) => String(event.payload.text ?? ""))
+    .join("");
 
   return {
     active,
-    commentary,
-    reasoning,
+    entries,
     liveAnswer,
     phase: projectPhase(ordered, { cancelling, error, cancelled, finished }),
     startedAt,
     endedAt,
-    toolGroups,
   };
 }
 
-function projectToolGroups(events: AgentEvent[]) {
+function projectActivityEntries(
+  events: AgentEvent[],
+  finalAnswerDeltas: Set<number>,
+  liveAnswerDeltas: Set<number>,
+): ActivityEntry[] {
   const results = new Map<string, { event: AgentEvent; result: ToolResult }>();
   for (const event of events) {
     if (event.payload.type !== "tool_call_finished") continue;
@@ -73,53 +87,111 @@ function projectToolGroups(events: AgentEvent[]) {
     if (result?.callId) results.set(result.callId, { event, result });
   }
 
-  let round = 0;
-  const groups = new Map<number, ToolActivityGroup>();
+  const startedCallIds = new Set<string>();
+  const primitives: Array<ActivityTextEntry & { seq: number } | { kind: "tool"; seq: number; tool: ToolActivity }> = [];
   for (const event of events) {
-    if (event.payload.type === "model_request") {
-      round = Number(event.payload.round ?? round + 1);
-      continue;
+    if (event.payload.type === "reasoning_delta" || event.payload.type === "model_delta") {
+      if (finalAnswerDeltas.has(event.seq) || liveAnswerDeltas.has(event.seq)) continue;
+      const text = String(event.payload.text ?? "");
+      if (text) primitives.push({
+        key: event.id,
+        kind: event.payload.type === "model_delta" ? "commentary" : "reasoning",
+        seq: event.seq,
+        text,
+      });
     }
     if (event.payload.type !== "tool_call_started") continue;
     const call = event.payload.call as ToolCall | undefined;
     if (!call?.id) continue;
+    startedCallIds.add(call.id);
     const completion = results.get(call.id);
-    const group = groups.get(round) ?? { key: `round-${round}`, round, tools: [] };
-    group.tools.push({ call, started: event, finished: completion?.event, result: completion?.result });
-    groups.set(round, group);
+    primitives.push({
+      kind: "tool",
+      seq: event.seq,
+      tool: { call, started: event, finished: completion?.event, result: completion?.result },
+    });
   }
-  return [...groups.values()];
+
+  // A history window can contain a completion after its start fell off the page.
+  for (const [callId, completion] of results) {
+    if (startedCallIds.has(callId)) continue;
+    const name = typeof completion.result.metadata?.toolName === "string"
+      ? completion.result.metadata.toolName : "tool";
+    primitives.push({
+      kind: "tool",
+      seq: completion.event.seq,
+      tool: {
+        call: { id: callId, name, input: {} },
+        started: completion.event,
+        finished: completion.event,
+        result: completion.result,
+      },
+    });
+  }
+
+  primitives.sort((left, right) => left.seq - right.seq);
+  const entries: ActivityEntry[] = [];
+  for (const primitive of primitives) {
+    const previous = entries.at(-1);
+    if (primitive.kind === "tool") {
+      const group = toolPresentation(primitive.tool.call).group;
+      if (previous?.kind === "tool-group" && previous.group === group) {
+        previous.tools.push(primitive.tool);
+      } else {
+        entries.push({ key: `tool-${primitive.seq}`, kind: "tool-group", group, tools: [primitive.tool] });
+      }
+    } else if (previous?.kind === primitive.kind) {
+      previous.text += primitive.text;
+    } else {
+      entries.push({ key: primitive.key, kind: primitive.kind, text: primitive.text });
+    }
+  }
+  return entries;
 }
 
-function projectModelText(events: AgentEvent[], completed: boolean, interrupted: boolean) {
-  const deltas = events.filter((event) => event.payload.type === "model_delta");
-  if (!deltas.length) return { commentary: "", liveAnswer: "" };
+/** Match only the streamed text that became the persisted final answer. */
+function findFinalAnswerDeltas(events: AgentEvent[]): Set<number> {
+  const assistantIndex = events.findLastIndex((event) => event.payload.type === "assistant_message");
+  if (assistantIndex < 0) return new Set();
+  const message = events[assistantIndex].payload.message as Message | undefined;
+  const finalText = message?.parts
+    ?.flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : [])
+    .join("") ?? "";
+  if (!finalText) return new Set();
 
-  const rounds = deltas.map((event) => {
-    const attempt = event.payload.provider_attempt as { round?: number } | undefined;
-    return attempt?.round;
-  });
-  const numericRounds = rounds.filter((round): round is number => typeof round === "number");
-  const latestRound = numericRounds.length ? Math.max(...numericRounds) : undefined;
+  let requestIndex = -1;
+  for (let index = assistantIndex - 1; index >= 0; index--) {
+    if (events[index].payload.type === "model_request") {
+      requestIndex = index;
+      break;
+    }
+  }
+  if (requestIndex < 0) return new Set();
+
+  let remaining = finalText;
+  const matched = new Set<number>();
+  for (const event of events.slice(requestIndex + 1, assistantIndex)) {
+    if (event.payload.type !== "model_delta") continue;
+    const text = String(event.payload.text ?? "");
+    if (!remaining.startsWith(text)) return new Set();
+    remaining = remaining.slice(text.length);
+    matched.add(event.seq);
+    if (!remaining) return matched;
+  }
+  return new Set();
+}
+
+function findLiveAnswerDeltas(events: AgentEvent[], finalAnswerDeltas: Set<number>): Set<number> {
+  if (events.some((event) => event.payload.type === "assistant_message")) return new Set();
   const lastToolSeq = events.reduce(
     (latest, event) => event.payload.type.startsWith("tool_call_") ? Math.max(latest, event.seq) : latest,
     -1,
   );
-  const commentary: string[] = [];
-  const answer: string[] = [];
-
-  deltas.forEach((event, index) => {
-    const text = String(event.payload.text ?? "");
-    const isFinalRound = latestRound !== undefined
-      ? rounds[index] === latestRound
-      : lastToolSeq < 0 || event.seq > lastToolSeq;
-    (isFinalRound ? answer : commentary).push(text);
-  });
-
-  return {
-    commentary: commentary.join(""),
-    liveAnswer: completed && !interrupted ? "" : answer.join(""),
-  };
+  const lastRequestSeq = lastWhere(events, (event) => event.payload.type === "model_request")?.seq ?? -1;
+  const boundary = Math.max(lastToolSeq, lastRequestSeq);
+  return new Set(events
+    .filter((event) => event.payload.type === "model_delta" && event.seq > boundary && !finalAnswerDeltas.has(event.seq))
+    .map((event) => event.seq));
 }
 
 function projectPhase(
@@ -208,13 +280,6 @@ function findRunningTool(events: AgentEvent[]) {
     .map((event) => event.payload.call as ToolCall),
     (call) => Boolean(call?.id && !completed.has(call.id)),
   );
-}
-
-function joinDeltas(events: AgentEvent[], type: string) {
-  return events
-    .filter((event) => event.payload.type === type)
-    .map((event) => String(event.payload.text ?? ""))
-    .join("");
 }
 
 export function eventTime(event?: AgentEvent) {

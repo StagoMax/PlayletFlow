@@ -3,6 +3,10 @@ import { ConversationStore } from "../conversationStore";
 
 const stores = new Map<string, ConversationStore>();
 
+export function forgetConversation(threadId: string) {
+  stores.delete(threadId);
+}
+
 function getStore(threadId: string) {
   let store = stores.get(threadId);
   if (!store) {

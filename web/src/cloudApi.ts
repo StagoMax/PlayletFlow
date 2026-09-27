@@ -62,6 +62,12 @@ export const cloudApi = {
     save(thread.id, { messages: [], events: [] });
     return thread;
   },
+  deleteThread: async (threadId: string) => {
+    localStorage.setItem(threadListKey, JSON.stringify(
+      read<Thread[]>(threadListKey, []).filter((thread) => thread.id !== threadId),
+    ));
+    localStorage.removeItem(conversationKey(threadId));
+  },
   generateThreadTitle: async (threadId: string, prompt: string, expectedTitle: string) => {
     const threads = read<Thread[]>(threadListKey, []);
     const current = threads.find((thread) => thread.id === threadId);
