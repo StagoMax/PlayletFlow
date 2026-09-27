@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type {
   GenerationInputSelection,
   GenerationModel,
@@ -6,6 +6,7 @@ import type {
   MediaKind,
 } from "../productApi/generated";
 import { Icon } from "../workspace/Icons";
+import { VideoGenerationToolbar } from "./VideoGenerationToolbar";
 import "./generation.css";
 
 export type GenerationModelLoader = (signal?: AbortSignal) => Promise<GenerationModel[]>;
@@ -19,6 +20,7 @@ type GenerationControlsProps = {
   loadModels: GenerationModelLoader;
   kind: MediaKind;
   media: GenerationMediaOption[];
+  referenceMediaIds?: readonly string[];
   value: GenerationOptions;
   onChange: (value: GenerationOptions) => void;
   disabled?: boolean;
@@ -29,6 +31,7 @@ export function GenerationControls({
   loadModels,
   kind,
   media,
+  referenceMediaIds = [],
   value,
   onChange,
   disabled = false,
@@ -78,8 +81,8 @@ export function GenerationControls({
       }
       return;
     }
-    const first = media[0]?.id;
-    if (first) onChange({ ...value, input: { type, mediaIds: [first] } });
+    const mediaIds = compact && kind === "video" ? referenceMediaIds : media.slice(0, 1).map((item) => item.id);
+    if (mediaIds.length > 0) onChange({ ...value, input: { type, mediaIds: [...mediaIds] } });
   }
 
   function toggleReference(mediaId: string, checked: boolean) {
@@ -225,22 +228,19 @@ export function GenerationControls({
   );
 
   if (compact) {
-    return (
-      <section className="generation-controls is-compact" aria-label="生成设置">
-        <span className="generation-controls__fixed-model">{fixedModelName}</span>
-        <details className="generation-controls__disclosure">
-          <summary aria-label="打开生成设置" title="生成设置">
-            <Icon name="more" />
-            <span>设置</span>
-          </summary>
-          <div className="generation-controls__panel">
-            <div className="generation-controls__grid">{formatControls}</div>
-            {inputControls}
-          </div>
-        </details>
-        {catalogError ? <small className="generation-controls__hint">{catalogError}</small> : null}
-      </section>
-    );
+    if (kind === "image") {
+      return (
+        <section className="generation-controls is-compact" aria-label="图片生成模型">
+          <span className="generation-controls__fixed-model composer-runtime-model">{fixedModelName}</span>
+          {catalogError ? <small className="generation-controls__hint">{catalogError}</small> : null}
+        </section>
+      );
+    }
+    return <VideoGenerationToolbar value={value} model={selectedModel} modelName={fixedModelName}
+      media={media} canUseFirstLast={canUseFirstLast}
+      canUseReferences={referenceMediaIds.length > 0 && maxReferences > 0}
+      disabled={disabled} catalogError={catalogError} onChange={onChange}
+      onSelectInput={setInput} />;
   }
 
   return (
@@ -252,5 +252,104 @@ export function GenerationControls({
       {catalogError ? <small className="generation-controls__hint">{catalogError}</small> : null}
       {inputControls}
     </section>
+  );
+}
+
+export function GenerationImageSizeControl({
+  value,
+  onChange,
+  disabled = false,
+}: Pick<GenerationControlsProps, "value" | "onChange" | "disabled">) {
+  const sizes = ["2K", "4K"] as const;
+  const selectedSize = value.imageSize === "4K" ? "4K" : "2K";
+  const listboxId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => optionRefs.current[sizes.indexOf(selectedSize)]?.focus());
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [open, selectedSize]);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
+  function choose(size: typeof sizes[number]) {
+    onChange({ ...value, imageSize: size });
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
+
+  function onOptionKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? sizes.length - 1
+        : (index + (event.key === "ArrowDown" ? 1 : -1) + sizes.length) % sizes.length;
+      optionRefs.current[nextIndex]?.focus();
+    }
+  }
+
+  return (
+    <div className="generation-image-size" ref={rootRef}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false);
+      }}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="generation-image-size__trigger"
+        aria-label={`图片规格，当前 ${selectedSize}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && open) {
+            event.preventDefault();
+            setOpen(false);
+          } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
+      >
+        <span>{selectedSize}</span>
+        <Icon name="chevron-down" />
+      </button>
+      {open ? (
+        <div id={listboxId} className="generation-image-size__menu" role="listbox" aria-label="图片规格">
+          {sizes.map((size, index) => (
+            <button
+              key={size}
+              ref={(element) => { optionRefs.current[index] = element; }}
+              type="button"
+              role="option"
+              aria-selected={size === selectedSize}
+              onClick={() => choose(size)}
+              onKeyDown={(event) => onOptionKeyDown(event, index)}
+            >
+              <span>{size}</span>
+              {size === selectedSize ? <Icon name="check" /> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }

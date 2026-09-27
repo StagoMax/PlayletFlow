@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import type { GenerationJob } from "../productApi/generated";
-import { MediaPromptComposer } from "../preview/MediaPromptComposer";
-import { MediaViewer } from "../preview/MediaViewer";
+import { MediaPromptComposer, type MediaSubmissionState } from "../preview/MediaPromptComposer";
 import { createCloudGenerationClient } from "../generation/cloudGenerationClient";
+import { uploadLocalGenerationInputs } from "../generation/localGenerationInputs";
 import { workspaceComposerAssets } from "../composer/workspaceAssets";
-import { Icon } from "./Icons";
+import { ObjectMediaStage } from "./ObjectMediaStage";
 import { useWorkspace } from "./WorkspaceContext";
 import { workspaceObjectMediaClient } from "./workspaceObjectMediaClient";
 import type { WorkspaceObjectNode } from "./types";
@@ -13,7 +13,7 @@ const cloud = createCloudGenerationClient();
 const supportedTypes = new Set(["image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime"]);
 const maxUploadBytes = 100 * 1024 * 1024;
 
-export function ObjectMediaWorkspace({ object }: { object: WorkspaceObjectNode }) {
+export function ObjectMediaWorkspace({ object, proposals }: { object: WorkspaceObjectNode; proposals?: ReactNode }) {
   const { data, current, objectMedia, publishObjectMedia, loadGenerationModels } = useWorkspace();
   const projectId = data.project.id;
   const storyboardId = current.storyboard.id;
@@ -25,13 +25,31 @@ export function ObjectMediaWorkspace({ object }: { object: WorkspaceObjectNode }
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
+  const [submission, setSubmission] = useState<MediaSubmissionState>({ status: "idle" });
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError("");
     void workspaceObjectMediaClient.ensure(projectId, storyboardId, object.id, controller.signal)
-      .then((loaded) => publishObjectMedia(object.id, loaded))
+      .then(async (loaded) => {
+        const job = await workspaceObjectMediaClient.getLatestGenerationJob(projectId, loaded.id, controller.signal);
+        if (controller.signal.aborted) return;
+        if (!job || job.targetRevision !== loaded.revision) {
+          publishObjectMedia(object.id, loaded);
+          return;
+        }
+        if (job.status === "succeeded") {
+          const refreshed = await workspaceObjectMediaClient.get(projectId, loaded.id, controller.signal);
+          if (!controller.signal.aborted) publishObjectMedia(object.id, refreshed);
+          return;
+        }
+        publishObjectMedia(object.id, {
+          ...loaded,
+          status: job.status === "failed" || job.status === "cancelled" ? "failed" : "processing",
+          generation: { jobId: job.id, provider: job.provider, model: job.spec.model, error: job.error },
+        });
+      })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted) setError(messageOf(cause));
       })
@@ -39,19 +57,8 @@ export function ObjectMediaWorkspace({ object }: { object: WorkspaceObjectNode }
     return () => controller.abort();
   }, [object.id, projectId, publishObjectMedia, storyboardId]);
 
-  useEffect(() => {
-    if (media?.status !== "processing") return;
-    const controller = new AbortController();
-    const timer = window.setInterval(() => {
-      void workspaceObjectMediaClient.get(projectId, media.id, controller.signal)
-        .then((updated) => publishObjectMedia(object.id, updated)).catch((cause: unknown) => {
-        if (!controller.signal.aborted) console.warn("媒体状态暂时不可用", cause);
-      });
-    }, 3_000);
-    return () => { controller.abort(); window.clearInterval(timer); };
-  }, [media?.id, media?.status, object.id, projectId, publishObjectMedia]);
-
   async function upload(file: File) {
+    setSubmission({ status: "idle" });
     if (!supportedTypes.has(file.type) || !file.type.startsWith(`${kind}/`)) {
       setError(`请选择${kind === "image" ? "JPEG、PNG 或 WebP 图片" : "MP4 或 MOV 视频"}。`);
       return;
@@ -81,9 +88,16 @@ export function ObjectMediaWorkspace({ object }: { object: WorkspaceObjectNode }
   }
 
   const allItems = [...current.assetGroups, ...current.videoGroups].flatMap((group) => group.items);
-  const referenceMedia = allItems
-    .filter((item) => item.media.kind === "image" && item.media.status === "ready")
-    .map((item) => ({ id: item.media.id, name: item.name }));
+  const composerAssets = workspaceComposerAssets(current, objectMedia);
+  const referenceMedia = composerAssets.flatMap((asset) =>
+    asset.kind === "image" && asset.mediaId && asset.previewMedia?.status === "ready"
+      ? [{ id: asset.mediaId, name: asset.name }]
+      : []);
+  const currentMediaIds = new Set(composerAssets.flatMap((asset) => asset.mediaId ? [asset.mediaId] : []));
+  const availableMedia = [
+    ...allItems.map((item) => item.media),
+    ...Object.values(objectMedia).filter((item) => currentMediaIds.has(item.id)),
+  ];
 
   return (
     <div className="canvas-body media-canvas-body">
@@ -94,36 +108,47 @@ export function ObjectMediaWorkspace({ object }: { object: WorkspaceObjectNode }
             event.currentTarget.value = "";
             if (file) void upload(file);
           }} />
-        {media?.status === "ready" || media?.status === "processing" || media?.status === "failed" ? (
-          <MediaViewer item={{ id: media.id, name: object.name, description: "", label, accent: "#aeb7ff", media }} />
-        ) : (
-          <button type="button" className={`object-media-upload-zone${dragging ? " is-dragging" : ""}`}
-            disabled={loading || uploading}
-            onClick={() => picker.current?.click()}
-            onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}>
-            <span className="object-media-upload-icon"><Icon name={kind === "image" ? "image" : "film"} /></span>
-            <strong>{uploading ? `正在上传${label}…` : loading ? `正在准备${label}…` : `点击上传${label}`}</strong>
-            <span>{kind === "image" ? "支持 JPEG、PNG、WebP" : "支持 MP4、MOV"} · 也可拖放文件到这里</span>
-          </button>
-        )}
-        {error ? <p className="object-media-error" role="alert">{error}</p> : null}
+        <ObjectMediaStage kind={kind} name={object.name} media={media} submission={submission}
+          loading={loading} uploading={uploading} dragging={dragging} error={error}
+          onUploadClick={() => picker.current?.click()}
+          onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)} onDrop={onDrop} />
+        {proposals}
         <div className="media-prompt-dock">
           {media ? <MediaPromptComposer key={media.id} initialPrompt={media.prompt ?? ""} kind={kind}
-            media={referenceMedia} assets={workspaceComposerAssets(current)} loadModels={loadGenerationModels}
-            onGenerate={async (prompt, generation, idempotencyKey) => {
+            draftKey={`${projectId}:${media.id}`}
+            media={referenceMedia} assets={composerAssets} loadModels={loadGenerationModels}
+            onSubmissionChange={setSubmission}
+            onUndoPrompt={async () => {
+              const restored = await workspaceObjectMediaClient.undoPrompt(
+                projectId, storyboardId, object.id, media.revision,
+              );
+              publishObjectMedia(object.id, {
+                ...media,
+                prompt: restored.prompt,
+                revision: restored.revision,
+              });
+            }}
+            onGenerate={async (prompt, generation, idempotencyKey, imageFiles) => {
               const request = { prompt, expectedRevision: media.revision, generation };
+              if (!import.meta.env.PROD) {
+                await uploadLocalGenerationInputs(projectId, storyboardId, imageFiles);
+              }
               const job = import.meta.env.PROD
                 ? await cloud.create(projectId, storyboardId, media.id, kind, request,
-                    idempotencyKey, [...allItems.map((item) => item.media), media])
+                    idempotencyKey, availableMedia, undefined, imageFiles)
                 : await mediaRequest<GenerationJob>(
                     `/api/v1/projects/${encodeURIComponent(projectId)}/storyboards/${encodeURIComponent(storyboardId)}/media/${encodeURIComponent(media.id)}/generations`,
                     { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
                       body: JSON.stringify(request) },
                   );
-              publishObjectMedia(object.id, {
-                ...media, prompt, revision: job.targetRevision, status: "processing",
+              const completed = job.status === "succeeded"
+                ? await workspaceObjectMediaClient.get(projectId, media.id).catch(() => null)
+                : null;
+              publishObjectMedia(object.id, completed?.status === "ready" ? completed : {
+                ...media, prompt, revision: job.targetRevision,
+                status: job.status === "failed" || job.status === "cancelled" ? "failed" : "processing",
+                generation: { jobId: job.id, provider: job.provider, model: job.spec.model, error: job.error },
               });
               return job;
             }} /> : null}

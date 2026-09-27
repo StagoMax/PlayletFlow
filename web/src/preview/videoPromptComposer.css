@@ -1,0 +1,62 @@
+.media-prompt-composer.is-video {
+  container-type: inline-size;
+  width: min(100%, 940px);
+  padding: 12px 13px 10px;
+  border-radius: 18px;
+}
+
+.media-prompt-composer.is-video .shared-composer-sources {
+  width: 100%;
+  padding: 0 0 2px 3px;
+}
+.media-prompt-composer.is-video .media-prompt-composer-input { min-height: 0; }
+.media-prompt-composer.is-video .inline-reference-editor {
+  min-height: clamp(84px, 12vh, 120px);
+  max-height: min(42vh, 380px);
+  padding: 5px 10px 8px;
+  font-size: var(--font-size-body);
+  line-height: 1.65;
+}
+.media-prompt-composer.is-video .composer-toolbar {
+  --composer-control-size: 36px;
+  --composer-icon-size: 17px;
+  --composer-label-size: var(--font-size-label);
+  align-items: flex-end;
+  gap: 5px;
+  padding: 4px 2px 0;
+}
+.media-prompt-composer.is-video .composer-toolbar__start {
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.media-prompt-composer.is-video .composer-toolbar__end { flex: 0 0 auto; gap: 0; }
+.media-prompt-composer.is-video .composer-toolbar__action {
+  --composer-control-size: 40px;
+}
+.media-prompt-composer.is-video .composer-toolbar__action svg { width: 19px; height: 19px; }
+@container (max-width: 700px) {
+  .media-prompt-composer.is-video .video-generation-toolbar__popover,
+  .media-prompt-composer.is-video .video-generation-toolbar__popover.is-duration {
+    right: auto;
+    left: 0;
+    width: min(100%, 440px);
+  }
+  .media-prompt-composer.is-video .video-generation-toolbar__popover.is-reference {
+    right: auto;
+    left: 0;
+    width: min(var(--reference-popover-width), calc(100vw - 32px));
+  }
+}
+
+@media (max-width: 620px) {
+  .media-prompt-composer.is-video { padding: 10px; }
+  .media-prompt-composer.is-video .inline-reference-editor { min-height: 96px; max-height: 40vh; }
+  .media-prompt-composer.is-video .composer-toolbar { --composer-label-size: 13px; }
+  .media-prompt-composer.is-video .video-generation-toolbar__popover,
+  .media-prompt-composer.is-video .video-generation-toolbar__popover.is-duration {
+    right: 12px;
+    left: 12px;
+    width: auto;
+  }
+}

@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import type { MediaItem } from "../productApi/generated";
 import { MediaMetadata } from "./MediaMetadata";
-import { MediaPromptComposer } from "./MediaPromptComposer";
+import { MediaPromptComposer, synchronizePromptDraft } from "./MediaPromptComposer";
+import { composeSubmissionText } from "../composer/submission";
+import type { ComposerAssetReference } from "../composer/types";
+import { parseMediaPromptDraft, synchronizeMediaPromptDraft } from "./mediaPromptDraft";
+import { imageGenerationInput } from "../generation/generationOptions";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { MediaViewer } from "./MediaViewer";
 import { hoverPreviewSize } from "./HoverPreview";
@@ -51,6 +55,43 @@ function item(overrides: Partial<MediaItem> = {}): PreviewItem {
 }
 
 export const previewTestCases: Record<string, () => TestResult> = {
+  "saved media prompts restore reference IDs without duplicating their footer"() {
+    const reference: ComposerAssetReference = {
+      id: "86bf4fd5-df01-466c-a535-1a5964248977",
+      name: "东施-正面图",
+      kind: "image",
+      mediaId: "86bf4fd5-df01-466c-a535-1a5964248977",
+      selection: { kind: "emptyObject", objectId: "image-1", objectType: "image" },
+    };
+    const body = "@东施-正面图 让这个正面图放大详细一点。";
+    const saved = composeSubmissionText(body, [reference], []);
+    const restored = parseMediaPromptDraft(saved);
+    const repeated = composeSubmissionText(restored.text, [reference], []);
+    const previouslyDuplicated = parseMediaPromptDraft(`${saved}\n\n${saved.slice(saved.indexOf("引用资产："))}`);
+    const updated = synchronizeMediaPromptDraft(parseMediaPromptDraft(""), "", saved);
+    const dirty = synchronizeMediaPromptDraft({ text: "正在编辑", references: [] }, "", saved);
+    const malformed = parseMediaPromptDraft(`${body}\n\n引用资产：\n- 图片「东施-正面图」(broken`);
+    return check(
+      restored.text === body
+        && restored.references[0]?.id === reference.id
+        && restored.references[0]?.name === reference.name
+        && repeated === saved
+        && previouslyDuplicated.text === body
+        && previouslyDuplicated.references.length === 1
+        && updated.references[0]?.id === reference.id
+        && dirty.text === "正在编辑"
+        && malformed.text.endsWith("(broken"),
+      "refresh should restore the saved reference by ID, keep a local draft, and avoid a second reference footer",
+    );
+  },
+  "media prompt follows an externally saved prompt without replacing a local draft"() {
+    const synchronized = synchronizePromptDraft("", "", "AI 写入的新提示词");
+    const preserved = synchronizePromptDraft("用户正在编辑", "", "AI 写入的新提示词");
+    return check(
+      synchronized === "AI 写入的新提示词" && preserved === "用户正在编辑",
+      "external prompt updates should populate a pristine editor and preserve a dirty draft",
+    );
+  },
   "thumbnail uses a square crop source with lazy loading metadata"() {
     const markup = renderToStaticMarkup(<MediaThumbnail item={item()} />);
     return check(
@@ -121,7 +162,7 @@ export const previewTestCases: Record<string, () => TestResult> = {
     );
   },
 
-  "prompt composer owns the editable prompt and generation controls"() {
+  "image prompt composer shows size beside the mention control without settings"() {
     const markup = renderToStaticMarkup(
       <MediaPromptComposer
         initialPrompt="雨夜港口，完整画幅"
@@ -133,10 +174,26 @@ export const previewTestCases: Record<string, () => TestResult> = {
       />,
     );
     return check(
-      markup.includes("雨夜港口，完整画幅")
-        && markup.includes("图片生成提示词编辑器")
-        && markup.includes("生成设置"),
-      "prompt editor should own the prompt, submit action and generation settings",
+      markup.includes("图片生成提示词编辑器")
+        && markup.includes("role=\"textbox\"")
+        && markup.includes("aria-label=\"生成提示词\"")
+        && markup.includes("aria-label=\"添加附件\"")
+        && /引用资产[\s\S]*图片规格[\s\S]*Seedream 5\.0 Lite/u.test(markup)
+        && !markup.includes("aria-label=\"添加资产或附件\"")
+        && !markup.includes("打开生成设置")
+        && !markup.includes("仅使用提示词"),
+      "image size should be inline after @ and image mode should not need settings",
+    );
+  },
+
+  "image inputs follow referenced and uploaded images"() {
+    const noImages = imageGenerationInput([], []);
+    const withImages = imageGenerationInput(["media-1"], [{ id: "upload-1", file: {} as File }]);
+    return check(
+      noImages.type === "textOnly"
+        && withImages.type === "referenceImages"
+        && withImages.mediaIds.join(",") === "media-1,upload-1",
+      "image generation should derive its input mode from present images",
     );
   },
 

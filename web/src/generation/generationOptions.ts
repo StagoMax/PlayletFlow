@@ -1,4 +1,15 @@
-import type { GenerationOptions, MediaKind } from "../productApi/generated";
+import type { GenerationInputSelection, GenerationOptions, MediaKind } from "../productApi/generated";
+
+export type GenerationImageFile = { id: string; file: File };
+
+export function imageGenerationInput(
+  referencedMediaIds: readonly string[],
+  files: readonly GenerationImageFile[],
+): GenerationInputSelection {
+  const mediaIds = [...new Set([...referencedMediaIds, ...files.map((item) => item.id)])];
+  if (mediaIds.length > 14) throw new Error("参考图片最多 14 张。");
+  return mediaIds.length > 0 ? { type: "referenceImages", mediaIds } : { type: "textOnly" };
+}
 
 export function createDefaultGenerationOptions(kind: MediaKind): GenerationOptions {
   return {

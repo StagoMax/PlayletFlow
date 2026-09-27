@@ -6,6 +6,8 @@ import type {
   RequestMediaGeneration,
 } from "../productApi/generated";
 import type { WorkspaceGenerationJob } from "../workspace/workspaceClient";
+import type { GenerationImageFile } from "./generationOptions";
+import { blobBase64, prepareImageBlob } from "./imageInput";
 
 type InputPayload = {
   mediaId: string;
@@ -24,6 +26,7 @@ export type CloudGenerationClient = {
     idempotencyKey: string,
     availableMedia: readonly MediaItem[],
     signal?: AbortSignal,
+    imageFiles?: readonly GenerationImageFile[],
   ): Promise<WorkspaceGenerationJob>;
   get(projectId: string, jobId: string, signal?: AbortSignal): Promise<WorkspaceGenerationJob>;
 };
@@ -40,8 +43,9 @@ export function createCloudGenerationClient(baseUrl = "/api/v1"): CloudGeneratio
       idempotencyKey,
       availableMedia,
       signal,
+      imageFiles = [],
     ) {
-      const inputs = await inputPayloads(request.generation, availableMedia, signal);
+      const inputs = await inputPayloads(request.generation, availableMedia, imageFiles, signal);
       return http<WorkspaceGenerationJob>(
         `${baseUrl}/projects/${segment(projectId)}/storyboards/${segment(storyboardId)}/media/${segment(mediaId)}/generations`,
         {
@@ -65,27 +69,28 @@ export function createCloudGenerationClient(baseUrl = "/api/v1"): CloudGeneratio
 async function inputPayloads(
   generation: GenerationOptions | null | undefined,
   availableMedia: readonly MediaItem[],
+  imageFiles: readonly GenerationImageFile[],
   signal?: AbortSignal,
 ): Promise<InputPayload[]> {
   const ids = selectedInputIds(generation);
   const byId = new Map(availableMedia.map((media) => [media.id, media]));
+  const filesById = new Map(imageFiles.map((item) => [item.id, item.file]));
   return Promise.all(ids.map(async (mediaId) => {
+    const file = filesById.get(mediaId);
+    if (file) return encodedInput(mediaId, await prepareImageBlob(file, signal));
     const media = byId.get(mediaId);
     if (!media || media.kind !== "image" || media.status !== "ready") {
       throw new Error("所选首尾帧或关键帧当前不可用。");
     }
     const url = media.preview?.url ?? media.thumbnail?.url;
     if (!url) throw new Error("所选参考图片没有可读取的预览地址。");
-    const blob = await supportedImageBlob(url, media.mimeType, signal);
-    if (blob.size > 8 * 1024 * 1024) {
-      throw new Error("单张参考图片不能超过 8 MB。");
-    }
-    return {
-      mediaId,
-      mimeType: blob.type,
-      dataBase64: await blobBase64(blob),
-    };
+    return encodedInput(mediaId, await supportedImageBlob(url, media.mimeType, signal));
   }));
+}
+
+async function encodedInput(mediaId: string, blob: Blob): Promise<InputPayload> {
+  if (blob.size > 8 * 1024 * 1024) throw new Error("单张参考图片不能超过 8 MB。");
+  return { mediaId, mimeType: blob.type, dataBase64: await blobBase64(blob) };
 }
 
 function selectedInputIds(generation: GenerationOptions | null | undefined) {
@@ -100,55 +105,7 @@ function selectedInputIds(generation: GenerationOptions | null | undefined) {
 async function supportedImageBlob(url: string, declaredType: string, signal?: AbortSignal) {
   const response = await fetch(url, { signal });
   if (!response.ok) throw new Error("读取参考图片失败，请刷新后重试。");
-  const source = await response.blob();
-  const mimeType = source.type || declaredType;
-  if (["image/jpeg", "image/png", "image/webp"].includes(mimeType)) {
-    return source.type ? source : source.slice(0, source.size, mimeType);
-  }
-  if (mimeType !== "image/svg+xml") {
-    throw new Error("参考图片必须是 JPEG、PNG 或 WebP 格式。");
-  }
-  return rasterize(source, signal);
-}
-
-async function rasterize(source: Blob, signal?: AbortSignal): Promise<Blob> {
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  const objectUrl = URL.createObjectURL(source);
-  try {
-    const image = new Image();
-    image.decoding = "async";
-    image.src = objectUrl;
-    await image.decode();
-    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    const canvas = document.createElement("canvas");
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("浏览器无法转换参考图片。");
-    context.drawImage(image, 0, 0);
-    return await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(
-        (blob) => blob ? resolve(blob) : reject(new Error("浏览器无法转换参考图片。")),
-        "image/png",
-      );
-    });
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
-
-function blobBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("读取参考图片失败。"));
-    reader.onload = () => {
-      const value = String(reader.result ?? "");
-      const separator = value.indexOf(",");
-      if (separator < 0) reject(new Error("参考图片编码失败。"));
-      else resolve(value.slice(separator + 1));
-    };
-    reader.readAsDataURL(blob);
-  });
+  return prepareImageBlob(await response.blob(), signal, declaredType);
 }
 
 async function http<T>(url: string, init: RequestInit): Promise<T> {

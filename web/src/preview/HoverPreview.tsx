@@ -29,6 +29,7 @@ type HoverPreviewProps = {
   placement?: "side" | "top";
   openDelayMs?: number;
   className?: string;
+  panelClassName?: string;
 };
 
 type PanelPosition = {
@@ -58,18 +59,12 @@ export function HoverPreview({
   placement: preferredPlacement = "side",
   openDelayMs = OPEN_DELAY_MS,
   className,
+  panelClassName,
 }: HoverPreviewProps) {
   const anchorRef = useRef<HTMLDivElement>(null);
   const openTimer = useRef<number | null>(null);
   const closeTimer = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<PanelPosition>({
-    top: VIEWPORT_GUTTER,
-    left: VIEWPORT_GUTTER,
-    width: 360,
-    height: 225,
-    placement: "right",
-  });
 
   const clearTimers = useCallback(() => {
     if (openTimer.current !== null) window.clearTimeout(openTimer.current);
@@ -92,62 +87,6 @@ export function HoverPreview({
     clearTimers();
     closeTimer.current = window.setTimeout(() => setOpen(false), CLOSE_DELAY_MS);
   }, [clearTimers]);
-
-  const updatePosition = useCallback(() => {
-    const anchor = anchorRef.current;
-    if (!anchor) return;
-    const rect = anchor.getBoundingClientRect();
-    const { width, height } = hoverPreviewSize(item.media, window.innerWidth, window.innerHeight);
-    if (preferredPlacement === "top") {
-      const preferredLeft = rect.left + rect.width / 2 - width / 2;
-      const left = Math.min(
-        window.innerWidth - width - VIEWPORT_GUTTER,
-        Math.max(VIEWPORT_GUTTER, preferredLeft),
-      );
-      const aboveTop = rect.top - height - PANEL_GAP;
-      const belowTop = rect.bottom + PANEL_GAP;
-      const fitsAbove = aboveTop >= VIEWPORT_GUTTER;
-      const fitsBelow = belowTop + height <= window.innerHeight - VIEWPORT_GUTTER;
-      const top = fitsAbove
-        ? aboveTop
-        : fitsBelow
-          ? belowTop
-          : Math.min(
-              Math.max(VIEWPORT_GUTTER, aboveTop),
-              Math.max(VIEWPORT_GUTTER, window.innerHeight - height - VIEWPORT_GUTTER),
-            );
-      setPosition({ top, left, width, height, placement: fitsAbove || !fitsBelow ? "top" : "bottom" });
-      return;
-    }
-    const rightLeft = rect.right + PANEL_GAP;
-    const fitsRight = rightLeft + width <= window.innerWidth - VIEWPORT_GUTTER;
-    const placement = fitsRight ? "right" : "left";
-    const preferredLeft = fitsRight ? rightLeft : rect.left - width - PANEL_GAP;
-    const left = Math.min(
-      window.innerWidth - width - VIEWPORT_GUTTER,
-      Math.max(VIEWPORT_GUTTER, preferredLeft),
-    );
-    const maxTop = Math.max(
-      VIEWPORT_GUTTER,
-      window.innerHeight - height - VIEWPORT_GUTTER,
-    );
-    const top = Math.min(
-      maxTop,
-      Math.max(VIEWPORT_GUTTER, rect.top + rect.height / 2 - height / 2),
-    );
-    setPosition({ top, left, width, height, placement });
-  }, [item.media, preferredPlacement]);
-
-  useLayoutEffect(() => {
-    if (!open) return undefined;
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [open, updatePosition]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -189,17 +128,91 @@ export function HoverPreview({
       onBlurCapture={onBlur}
     >
       {children}
-      {open && !disabled && typeof document !== "undefined"
-        ? createPortal(
-            <HoverPreviewPanel item={item} position={position} />,
-            document.body,
-          )
-        : null}
+      {open && !disabled && anchorRef.current ? (
+        <HoverPreviewPortal item={item} anchor={anchorRef.current} placement={preferredPlacement} className={panelClassName} />
+      ) : null}
     </div>
   );
 }
 
-function HoverPreviewPanel({ item, position }: { item: HoverPreviewItem; position: PanelPosition }) {
+export function HoverPreviewPortal({
+  item,
+  anchor,
+  placement: preferredPlacement = "side",
+  className,
+}: {
+  item: HoverPreviewItem;
+  anchor: HTMLElement;
+  placement?: "side" | "top";
+  className?: string;
+}) {
+  const [position, setPosition] = useState<PanelPosition>({
+    top: VIEWPORT_GUTTER,
+    left: VIEWPORT_GUTTER,
+    width: 360,
+    height: 225,
+    placement: "right",
+  });
+
+  const updatePosition = useCallback(() => {
+    const rect = anchor.getBoundingClientRect();
+    const { width, height } = hoverPreviewSize(item.media, window.innerWidth, window.innerHeight);
+    if (preferredPlacement === "top") {
+      const preferredLeft = rect.left + rect.width / 2 - width / 2;
+      const left = Math.min(
+        window.innerWidth - width - VIEWPORT_GUTTER,
+        Math.max(VIEWPORT_GUTTER, preferredLeft),
+      );
+      const aboveTop = rect.top - height - PANEL_GAP;
+      const belowTop = rect.bottom + PANEL_GAP;
+      const fitsAbove = aboveTop >= VIEWPORT_GUTTER;
+      const fitsBelow = belowTop + height <= window.innerHeight - VIEWPORT_GUTTER;
+      const top = fitsAbove
+        ? aboveTop
+        : fitsBelow
+          ? belowTop
+          : Math.min(
+              Math.max(VIEWPORT_GUTTER, aboveTop),
+              Math.max(VIEWPORT_GUTTER, window.innerHeight - height - VIEWPORT_GUTTER),
+            );
+      setPosition({ top, left, width, height, placement: fitsAbove || !fitsBelow ? "top" : "bottom" });
+      return;
+    }
+    const rightLeft = rect.right + PANEL_GAP;
+    const fitsRight = rightLeft + width <= window.innerWidth - VIEWPORT_GUTTER;
+    const placement = fitsRight ? "right" : "left";
+    const preferredLeft = fitsRight ? rightLeft : rect.left - width - PANEL_GAP;
+    const left = Math.min(
+      window.innerWidth - width - VIEWPORT_GUTTER,
+      Math.max(VIEWPORT_GUTTER, preferredLeft),
+    );
+    const maxTop = Math.max(
+      VIEWPORT_GUTTER,
+      window.innerHeight - height - VIEWPORT_GUTTER,
+    );
+    const top = Math.min(
+      maxTop,
+      Math.max(VIEWPORT_GUTTER, rect.top + rect.height / 2 - height / 2),
+    );
+    setPosition({ top, left, width, height, placement });
+  }, [anchor, item.media, preferredPlacement]);
+
+  useLayoutEffect(() => {
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [updatePosition]);
+
+  return typeof document !== "undefined"
+    ? createPortal(<HoverPreviewPanel item={item} position={position} className={className} />, document.body)
+    : null;
+}
+
+function HoverPreviewPanel({ item, position, className }: { item: HoverPreviewItem; position: PanelPosition; className?: string }) {
   const reducedMotion = useReducedMotion();
   const { media } = item;
   const preview = media.preview && !isAccessExpired(media.preview) ? media.preview : null;
@@ -213,7 +226,7 @@ function HoverPreviewPanel({ item, position }: { item: HoverPreviewItem; positio
 
   return (
     <aside
-      className="hover-preview-panel"
+      className={`hover-preview-panel${className ? ` ${className}` : ""}`}
       data-placement={position.placement}
       style={{ top: position.top, left: position.left, width: position.width, height: position.height }}
       role="tooltip"
