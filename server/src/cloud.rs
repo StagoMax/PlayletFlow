@@ -33,11 +33,12 @@ pub fn router(state: CloudState) -> Router {
     Router::new()
         .route(
             "/health",
-            get(|| async {
+            get(|State(state): State<CloudState>| async move {
                 Json(json!({
                     "status": "ok",
                     "runtime": "opentopia-agent-core",
-                    "model": runtime::configured_model_id().ok(),
+                    "mode": if state.fixture { "fixture" } else { "live" },
+                    "model": if state.fixture { Some("mock-fixture".to_owned()) } else { runtime::configured_model_id().ok() },
                 }))
             }),
         )
@@ -119,17 +120,19 @@ fn stream_response(state: CloudState, request: TurnRequest) -> Response {
             started,
         } = prepared;
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-        let work = runtime::run_once(
+        let work = runtime::run_once(runtime::RuntimeTurnRequest {
             provider,
             tools,
             workspace,
             thread_id,
             turn_id,
-            user.id,
+            user_message_id: user.id,
             content,
-            history,
-            Some(sender),
-        );
+            conversation: history,
+            sender: Some(sender),
+            workspace_context: None,
+            cancellation: None,
+        });
         tokio::pin!(work);
         let mut events = Vec::new();
         let result = loop {
@@ -244,9 +247,19 @@ async fn execute_turn(
         next_seq,
         started,
     } = prepared;
-    let result = runtime::run_once(
-        provider, tools, workspace, thread_id, turn_id, user.id, content, history, None,
-    )
+    let result = runtime::run_once(runtime::RuntimeTurnRequest {
+        provider,
+        tools,
+        workspace,
+        thread_id,
+        turn_id,
+        user_message_id: user.id,
+        content,
+        conversation: history,
+        sender: None,
+        workspace_context: None,
+        cancellation: None,
+    })
     .await
     .map_err(|cause| {
         eprintln!("cloud turn failed: {cause:#}");

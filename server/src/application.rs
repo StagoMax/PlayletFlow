@@ -21,6 +21,13 @@ impl product::application::workspace_threads::RuntimeThreadGateway for RuntimeTh
             .map(|thread| thread.id)
             .map_err(|error| product::domain::ProductError::External(error.to_string()))
     }
+
+    async fn delete_thread(&self, thread_id: Uuid) -> product::domain::ProductResult<()> {
+        self.0
+            .delete_thread(thread_id)
+            .await
+            .map_err(|error| product::domain::ProductError::Storage(error.to_string()))
+    }
 }
 
 #[derive(Clone)]
@@ -106,7 +113,9 @@ async fn run_local(fixture: bool, seed_demo_workspace: bool) -> Result<()> {
     let media_root =
         std::env::var("VIDEOFLOW_MEDIA_DIR").unwrap_or_else(|_| ".videoflow/media".to_owned());
     let media_store = Arc::new(product::infrastructure::LocalMediaStore::new(&media_root)?);
-    if let Some(config) = product::infrastructure::VolcengineGenerationConfig::from_env()? {
+    let generation_config = product::infrastructure::VolcengineGenerationConfig::from_env()?;
+    let generation_available = fixture || generation_config.is_some();
+    if let Some(config) = generation_config {
         let provider = Arc::new(product::infrastructure::VolcengineGenerationProvider::new(
             config,
         )?);
@@ -121,11 +130,18 @@ async fn run_local(fixture: bool, seed_demo_workspace: bool) -> Result<()> {
     let proposal_service = product::application::proposals::ProposalService::new(Arc::new(
         product::infrastructure::sqlite::SqliteProposalRepository::new(product_database.clone()),
     ));
+    let workspace_nodes =
+        product::application::workspace_nodes::WorkspaceNodeService::new(Arc::new(
+            product::infrastructure::sqlite::SqliteWorkspaceNodeRepository::new(
+                product_database.clone(),
+            ),
+        ));
     let mut tools = runtime::default_registry();
     product::tools::register_product_tools(
         &mut tools,
         proposal_service,
         product::tools::WorkspaceThreadScopeResolver::new(workspace_store.clone()),
+        workspace_nodes,
     );
     let base_service =
         conversation::ConversationService::new(store, provider, tools, std::env::current_dir()?);
@@ -145,8 +161,9 @@ async fn run_local(fixture: bool, seed_demo_workspace: bool) -> Result<()> {
         product_database,
         workspace_threads,
         media_store,
+        generation_available,
     );
-    let app = api::router(service)
+    let app = api::router(service, fixture)
         .merge(product_router)
         .nest_service("/api/v1/media-files", ServeDir::new(media_root));
     axum::serve(listener, app).await?;
@@ -159,7 +176,7 @@ fn spawn_generation_runtime(
     media_store: Arc<product::infrastructure::LocalMediaStore>,
 ) {
     use product::application::generation::{
-        GenerationMonitor, GenerationWorker, GenerationWorkerOutcome,
+        GenerationMonitor, GenerationMonitorOutcome, GenerationWorker, GenerationWorkerOutcome,
     };
     let media_repository = Arc::new(product::infrastructure::sqlite::SqliteMediaRepository::new(
         database.clone(),
@@ -185,15 +202,38 @@ fn spawn_generation_runtime(
                 match worker.run_once().await {
                     Ok(GenerationWorkerOutcome::Idle) => break,
                     Ok(GenerationWorkerOutcome::WaitingForProvider { .. }) => break,
-                    Ok(_) => {}
+                    Ok(GenerationWorkerOutcome::Submitted { job_id }) => {
+                        println!("generation job {job_id} submitted to provider");
+                    }
+                    Ok(GenerationWorkerOutcome::Succeeded { job_id }) => {
+                        println!("generation job {job_id} succeeded");
+                    }
+                    Ok(GenerationWorkerOutcome::Failed { job_id }) => {
+                        eprintln!("generation job {job_id} failed during submission");
+                    }
                     Err(error) => {
                         eprintln!("generation submission worker failed: {error}");
                         break;
                     }
                 }
             }
-            if let Err(error) = monitor.run_once().await {
-                eprintln!("generation monitor failed: {error}");
+            match monitor.run_once().await {
+                Ok(outcomes) => {
+                    for outcome in outcomes {
+                        match outcome {
+                            GenerationMonitorOutcome::Succeeded { job_id } => {
+                                println!("generation job {job_id} succeeded");
+                            }
+                            GenerationMonitorOutcome::Failed { job_id } => {
+                                eprintln!(
+                                    "generation job {job_id} failed during provider processing"
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Err(error) => eprintln!("generation monitor failed: {error}"),
             }
         }
     });
@@ -202,17 +242,19 @@ fn spawn_generation_runtime(
 async fn smoke() -> Result<()> {
     let workspace = std::env::current_dir()?;
     let provider = runtime::configured_provider().await?;
-    let result = runtime::run_once(
+    let result = runtime::run_once(runtime::RuntimeTurnRequest {
         provider,
-        runtime::default_registry(),
+        tools: runtime::default_registry(),
         workspace,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-        "Say hello in one short sentence.".to_string(),
-        Vec::new(),
-        None,
-    )
+        thread_id: Uuid::new_v4(),
+        turn_id: Uuid::new_v4(),
+        user_message_id: Uuid::new_v4(),
+        content: "Say hello in one short sentence.".to_string(),
+        conversation: Vec::new(),
+        sender: None,
+        workspace_context: None,
+        cancellation: None,
+    })
     .await?;
     for event in result.events {
         if let AgentEventPayload::AssistantMessage { message } = event {

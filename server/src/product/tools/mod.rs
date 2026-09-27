@@ -1,8 +1,9 @@
 use crate::product::application::proposals::{CreateProposal, ProposalService};
+use crate::product::application::workspace_nodes::WorkspaceNodeService;
 use crate::product::application::workspace_threads::{StoryboardResource, WorkspaceThreadStore};
 use crate::product::domain::{
     AssetBindingId, ChangeProposal, GenerationInputSelection, MediaId, ProductError, ProductResult,
-    ProjectId, ProposalSource, ProposalTarget, StoryboardId,
+    ProjectId, ProposalSource, ProposalTarget, StoryboardId, WorkspaceObjectType,
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -15,12 +16,18 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
 
+mod creation;
 mod prompt;
+mod prompt_write;
 mod resources;
 
+use creation::CreateWorkspaceObjectTool;
 use prompt::{ProposeImagePromptChangeTool, ProposeVideoPromptChangeTool};
+use prompt_write::SaveWorkspaceObjectPromptTool;
 use resources::{ReadStoryboardAssetTool, SearchStoryboardAssetsTool};
 
+const CREATE_OBJECT_TOOL_NAME: &str = "create_workspace_object";
+const SAVE_OBJECT_PROMPT_TOOL_NAME: &str = "save_workspace_object_prompt";
 const SEARCH_TOOL_NAME: &str = "search_storyboard_assets";
 const READ_TOOL_NAME: &str = "read_storyboard_asset";
 const TEXT_TOOL_NAME: &str = "propose_text_patch";
@@ -60,6 +67,7 @@ impl WorkspaceThreadScopeResolver {
 struct ProductToolServices {
     proposals: ProposalService,
     scope: WorkspaceThreadScopeResolver,
+    workspace_nodes: WorkspaceNodeService,
 }
 
 impl ProductToolServices {
@@ -72,8 +80,19 @@ pub fn register_product_tools(
     registry: &mut ToolRegistry,
     proposals: ProposalService,
     scope: WorkspaceThreadScopeResolver,
+    workspace_nodes: WorkspaceNodeService,
 ) {
-    let services = ProductToolServices { proposals, scope };
+    let services = ProductToolServices {
+        proposals,
+        scope,
+        workspace_nodes,
+    };
+    registry.register(Arc::new(CreateWorkspaceObjectTool {
+        services: services.clone(),
+    }));
+    registry.register(Arc::new(SaveWorkspaceObjectPromptTool {
+        services: services.clone(),
+    }));
     registry.register(Arc::new(SearchStoryboardAssetsTool {
         services: services.clone(),
     }));
@@ -233,6 +252,16 @@ fn proposal_execution_policy() -> ToolExecutionPolicy {
         parallel_safe: false,
         side_effect: ToolSideEffect::SessionMutation,
         resource_keys: vec!["videoflow:change-proposals".into()],
+    }
+}
+
+fn workspace_mutation_policy() -> ToolExecutionPolicy {
+    ToolExecutionPolicy {
+        read_only: false,
+        idempotent: true,
+        parallel_safe: false,
+        side_effect: ToolSideEffect::SessionMutation,
+        resource_keys: vec!["videoflow:workspace-nodes".into()],
     }
 }
 

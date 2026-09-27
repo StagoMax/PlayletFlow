@@ -19,6 +19,7 @@ pub struct StoryboardContext {
     pub storyboard_name: String,
     pub storyboard_revision: i64,
     pub script: StoryboardScriptContext,
+    pub folders: Vec<StoryboardFolderContext>,
     pub assets: Vec<StoryboardAssetContext>,
     pub media: Vec<StoryboardMediaContext>,
 }
@@ -28,6 +29,14 @@ pub struct StoryboardContext {
 pub struct StoryboardScriptContext {
     pub text: String,
     pub revision: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoryboardFolderContext {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -104,6 +113,13 @@ pub trait WorkspaceThreadStore: Send + Sync {
         idempotency: IdempotencyContext,
     ) -> ProductResult<WorkspaceThreadBinding>;
 
+    async fn delete_binding(
+        &self,
+        project_id: ProjectId,
+        storyboard_id: StoryboardId,
+        thread_id: Uuid,
+    ) -> ProductResult<()>;
+
     async fn load_context(&self, thread_id: Uuid) -> ProductResult<Option<StoryboardContext>>;
 
     async fn list_resources(&self, thread_id: Uuid) -> ProductResult<Vec<StoryboardResource>>;
@@ -118,6 +134,7 @@ pub trait WorkspaceThreadStore: Send + Sync {
 #[async_trait]
 pub trait RuntimeThreadGateway: Send + Sync {
     async fn create_thread(&self, title: String) -> ProductResult<Uuid>;
+    async fn delete_thread(&self, thread_id: Uuid) -> ProductResult<()>;
 }
 
 #[derive(Clone)]
@@ -192,6 +209,27 @@ impl WorkspaceThreadService {
                 },
                 idempotency,
             )
+            .await
+    }
+
+    pub async fn delete(
+        &self,
+        project_id: ProjectId,
+        storyboard_id: StoryboardId,
+        thread_id: Uuid,
+    ) -> ProductResult<()> {
+        self.store.validate_scope(project_id, storyboard_id).await?;
+        let binding = self.store.find_by_thread(thread_id).await?;
+        if !binding.is_some_and(|binding| {
+            binding.project_id == project_id && binding.storyboard_id == storyboard_id
+        }) {
+            return Err(ProductError::NotFound);
+        }
+        // Runtime and product metadata live in separate databases. Runtime deletion
+        // is idempotent so a failed binding write can be retried safely.
+        self.runtime.delete_thread(thread_id).await?;
+        self.store
+            .delete_binding(project_id, storyboard_id, thread_id)
             .await
     }
 

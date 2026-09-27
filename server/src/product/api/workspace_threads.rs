@@ -24,6 +24,10 @@ pub fn router(service: WorkspaceThreadService) -> Router {
             "/api/v1/projects/:project_id/storyboards/:storyboard_id/ai-threads",
             get(list_workspace_threads),
         )
+        .route(
+            "/api/v1/projects/:project_id/storyboards/:storyboard_id/ai-threads/:thread_id",
+            axum::routing::delete(delete_workspace_thread),
+        )
         .with_state(WorkspaceThreadApiState { service })
 }
 
@@ -40,6 +44,23 @@ async fn list_workspace_threads(
             )
             .await?,
     ))
+}
+
+async fn delete_workspace_thread(
+    State(state): State<WorkspaceThreadApiState>,
+    Path((project_id, storyboard_id, thread_id)): Path<(String, String, String)>,
+) -> ApiResult<StatusCode> {
+    let thread_id = Uuid::parse_str(&thread_id)
+        .map_err(|_| ProductApiError::invalid_request("threadId must be a UUID"))?;
+    state
+        .service
+        .delete(
+            parse_project_id(&project_id)?,
+            parse_storyboard_id(&storyboard_id)?,
+            thread_id,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn get_workspace_thread(

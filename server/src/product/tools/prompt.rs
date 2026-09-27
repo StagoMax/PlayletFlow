@@ -33,7 +33,7 @@ impl Tool for ProposeImagePromptChangeTool {
     }
 
     fn description(&self) -> &str {
-        "Propose an image prompt and its ordered reference images for an image or bound asset in this storyboard. Use search/read first. Nothing changes until user confirmation."
+        "Propose an image prompt and its ordered reference images for later user confirmation and generation. Use this only when the user wants a generation proposal. When the user only wants text filled into an object's prompt editor without generation, use save_workspace_object_prompt instead."
     }
 
     fn schema(&self) -> Value {
@@ -83,7 +83,7 @@ impl Tool for ProposeVideoPromptChangeTool {
     }
 
     fn description(&self) -> &str {
-        "Propose a video prompt. Input is textOnly, strict first/last frames, or ordered reference images. The two image input families are mutually exclusive. Read target and referenced assets first."
+        "Propose a video prompt and image inputs for later user confirmation and generation. Use this only when the user wants a generation proposal. When the user only wants text filled into an object's prompt editor without generation, use save_workspace_object_prompt instead."
     }
 
     fn schema(&self) -> Value {

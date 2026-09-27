@@ -1,9 +1,12 @@
 use super::*;
 use crate::product::application::proposals::ProposalService;
+use crate::product::application::workspace_nodes::{
+    UndoWorkspaceObjectPromptInput, WorkspaceNodeService,
+};
 use crate::product::application::workspace_threads::WorkspaceThreadStore;
 use crate::product::infrastructure::sqlite::{
     demo_storyboard_id, seed_demo_workspace, ProductDatabase, SqliteProposalRepository,
-    SqliteWorkspaceThreadStore, DEMO_PROJECT_ID,
+    SqliteWorkspaceNodeRepository, SqliteWorkspaceThreadStore, DEMO_PROJECT_ID,
 };
 use opentopia_core::policy::PermissionMode;
 use opentopia_core::{CapabilityProjection, ExecutionAuthority, LocalSandboxConfig};
@@ -69,6 +72,9 @@ impl ToolFixture {
             &mut registry,
             proposals,
             WorkspaceThreadScopeResolver::new(workspace_store),
+            WorkspaceNodeService::new(Arc::new(SqliteWorkspaceNodeRepository::new(
+                database.clone(),
+            ))),
         );
         Self {
             database,
@@ -133,10 +139,12 @@ fn only_storyboard_tools_are_registered() {
     assert_eq!(
         fixture.registry.list(),
         vec![
+            CREATE_OBJECT_TOOL_NAME,
             IMAGE_TOOL_NAME,
             TEXT_TOOL_NAME,
             VIDEO_TOOL_NAME,
             READ_TOOL_NAME,
+            SAVE_OBJECT_PROMPT_TOOL_NAME,
             SEARCH_TOOL_NAME,
         ]
     );
@@ -146,6 +154,287 @@ fn only_storyboard_tools_are_registered() {
         assert!(schema["properties"].get("projectId").is_none());
         assert!(schema["properties"].get("storyboardId").is_none());
     }
+}
+
+#[tokio::test]
+async fn saves_image_and_video_prompts_directly_without_generation_or_proposals() {
+    let fixture = ToolFixture::new();
+    let create = fixture.tool(CREATE_OBJECT_TOOL_NAME);
+    let save = fixture.tool(SAVE_OBJECT_PROMPT_TOOL_NAME);
+    let mut saved_image: Option<(String, String)> = None;
+
+    for (object_type, name, prompt) in [
+        ("image", "新图片对象", "电影感人物定妆，柔和侧光"),
+        ("video", "新视频对象", "镜头从全景缓慢推进到人物近景"),
+    ] {
+        let created = create
+            .execute(
+                ToolCall::new(
+                    CREATE_OBJECT_TOOL_NAME,
+                    json!({
+                        "parentId": null,
+                        "name": name,
+                        "objectType": object_type,
+                        "prompt": "初始提示词"
+                    }),
+                ),
+                fixture.context(fixture.thread_id),
+            )
+            .await
+            .unwrap();
+        let created: Value = serde_json::from_str(&created.output).unwrap();
+        let object_id = created["objectId"].as_str().unwrap();
+        let call = ToolCall::new(
+            SAVE_OBJECT_PROMPT_TOOL_NAME,
+            json!({
+                "targetId": object_id,
+                "baseRevision": 1,
+                "prompt": prompt
+            }),
+        );
+        let first = save
+            .execute(call.clone(), fixture.context(fixture.thread_id))
+            .await
+            .unwrap();
+        let replay = save
+            .execute(call, fixture.context(fixture.thread_id))
+            .await
+            .unwrap();
+        let first: Value = serde_json::from_str(&first.output).unwrap();
+        let replay: Value = serde_json::from_str(&replay.output).unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(first["objectType"], object_type);
+        assert_eq!(first["revision"], 2);
+        assert_eq!(first["generationRequested"], false);
+
+        let saved: (String, String, i64, Option<String>) = fixture
+            .database
+            .connect()
+            .unwrap()
+            .query_row(
+                "SELECT media.kind, media.prompt, media.revision, node.unseen_update_at
+                 FROM media_items media JOIN workspace_nodes node ON node.target_id = media.id
+                 WHERE media.id = ?1",
+                [object_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(saved.0, object_type);
+        assert_eq!(saved.1, prompt);
+        assert_eq!(saved.2, 2);
+        assert!(
+            saved.3.is_some(),
+            "Agent-authored prompt must remain marked unseen"
+        );
+        if object_type == "image" {
+            saved_image = Some((object_id.to_owned(), prompt.to_owned()));
+        }
+    }
+
+    let (image_id, expected_image_prompt) = saved_image.expect("image object was created");
+    let protected_image: (String, i64) = fixture
+        .database
+        .connect()
+        .unwrap()
+        .query_row(
+            "SELECT prompt, revision FROM media_items WHERE id = ?1",
+            [image_id.clone()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(protected_image.0, expected_image_prompt);
+    assert_eq!(
+        protected_image.1, 2,
+        "saving the video prompt must not revise the image object"
+    );
+
+    // Resource search returns the media ID, which is not necessarily the same as
+    // the workspace node ID. Preserve that abstraction boundary for linked media.
+    let linked_media_id = fixture_id(6, 12).to_string();
+    let linked_object_id = format!("node-video-draft-{}", demo_storyboard_id(12));
+    fixture
+        .database
+        .connect()
+        .unwrap()
+        .execute(
+            "UPDATE workspace_nodes SET target_id = ?1 WHERE id = ?2",
+            params![linked_media_id, linked_object_id],
+        )
+        .unwrap();
+    let linked = save
+        .execute(
+            ToolCall::new(
+                SAVE_OBJECT_PROMPT_TOOL_NAME,
+                json!({
+                    "targetId": linked_media_id,
+                    "baseRevision": 1,
+                    "prompt": "关联媒体的新视频提示词"
+                }),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await
+        .unwrap();
+    let linked: Value = serde_json::from_str(&linked.output).unwrap();
+    assert_eq!(linked["objectId"], linked_object_id);
+    assert_eq!(linked["mediaId"], linked_media_id);
+    assert_eq!(linked["objectType"], "video");
+    assert_eq!(linked["revision"], 2);
+
+    let linked_unseen: Option<String> = fixture
+        .database
+        .connect()
+        .unwrap()
+        .query_row(
+            "SELECT unseen_update_at FROM workspace_nodes WHERE id = ?1",
+            [linked_object_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(linked_unseen.is_some());
+    assert_eq!(fixture.count("workspace_object_prompt_history"), 3);
+
+    let undo_service = WorkspaceNodeService::new(Arc::new(SqliteWorkspaceNodeRepository::new(
+        fixture.database.clone(),
+    )));
+    let restored = undo_service
+        .undo_object_prompt(
+            UndoWorkspaceObjectPromptInput {
+                project_id: ProjectId(Uuid::parse_str(DEMO_PROJECT_ID).unwrap()),
+                storyboard_id: StoryboardId(Uuid::parse_str(&demo_storyboard_id(12)).unwrap()),
+                target_id: image_id.clone(),
+                expected_revision: 2,
+            },
+            "undo-image-prompt".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restored.prompt, "初始提示词");
+    assert_eq!(restored.revision, 3);
+    let restored_state: (String, i64, Option<String>) = fixture
+        .database
+        .connect()
+        .unwrap()
+        .query_row(
+            "SELECT media.prompt, media.revision, node.unseen_update_at
+             FROM media_items media JOIN workspace_nodes node ON node.target_id = media.id
+             WHERE media.id = ?1",
+            [image_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(restored_state, ("初始提示词".into(), 3, None));
+
+    assert_eq!(fixture.count("generation_jobs"), 0);
+    assert_eq!(fixture.count("change_proposals"), 0);
+}
+
+#[tokio::test]
+async fn creates_prompted_media_objects_in_the_requested_folder_without_generation() {
+    let fixture = ToolFixture::new();
+    let parent_id = format!("folder-{}-characters", demo_storyboard_id(12));
+    let call = ToolCall::new(
+        CREATE_OBJECT_TOOL_NAME,
+        json!({
+            "parentId": parent_id,
+            "name": "雨夜人物定妆",
+            "objectType": "image",
+            "prompt": "  林舟站在雨夜桥下，冷蓝侧光  "
+        }),
+    );
+    let tool = fixture.tool(CREATE_OBJECT_TOOL_NAME);
+    let first = tool
+        .execute(call.clone(), fixture.context(fixture.thread_id))
+        .await
+        .unwrap();
+    let replay = tool
+        .execute(call, fixture.context(fixture.thread_id))
+        .await
+        .unwrap();
+    let first: Value = serde_json::from_str(&first.output).unwrap();
+    let replay: Value = serde_json::from_str(&replay.output).unwrap();
+    assert_eq!(first["objectId"], replay["objectId"]);
+    assert_eq!(first["mediaId"], first["objectId"]);
+    assert_eq!(first["parentId"], parent_id);
+    assert_eq!(first["generationRequested"], false);
+
+    let object_id = first["objectId"].as_str().unwrap();
+    let saved: (String, String, String, String, String, i64) = fixture
+        .database
+        .connect()
+        .unwrap()
+        .query_row(
+            "SELECT node.object_type, node.target_type, node.target_id, media.prompt,
+                    media.status, media.revision
+             FROM workspace_nodes node JOIN media_items media ON media.id = node.target_id
+             WHERE node.id = ?1",
+            [object_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        saved,
+        (
+            "image".into(),
+            "media".into(),
+            object_id.into(),
+            "林舟站在雨夜桥下，冷蓝侧光".into(),
+            "placeholder".into(),
+            1,
+        )
+    );
+    assert_eq!(fixture.count("generation_jobs"), 0);
+
+    let video = tool
+        .execute(
+            ToolCall::new(
+                CREATE_OBJECT_TOOL_NAME,
+                json!({
+                    "parentId": null,
+                    "name": "桥下推进镜头",
+                    "objectType": "video",
+                    "prompt": "镜头缓慢向前推进"
+                }),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await
+        .unwrap();
+    let video: Value = serde_json::from_str(&video.output).unwrap();
+    assert_eq!(video["objectType"], "video");
+    assert_eq!(video["parentId"], Value::Null);
+    assert_eq!(fixture.count("generation_jobs"), 0);
+}
+
+#[tokio::test]
+async fn create_object_rejects_a_folder_outside_the_bound_storyboard() {
+    let fixture = ToolFixture::new();
+    let result = fixture
+        .tool(CREATE_OBJECT_TOOL_NAME)
+        .execute(
+            ToolCall::new(
+                CREATE_OBJECT_TOOL_NAME,
+                json!({
+                    "parentId": format!("folder-assets-{}", demo_storyboard_id(1)),
+                    "name": "越界对象",
+                    "objectType": "image",
+                    "prompt": "不应创建"
+                }),
+            ),
+            fixture.context(fixture.thread_id),
+        )
+        .await;
+    assert!(result.is_err());
+    assert_eq!(fixture.count("generation_jobs"), 0);
 }
 
 #[tokio::test]

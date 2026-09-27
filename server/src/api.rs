@@ -19,9 +19,20 @@ use std::convert::Infallible;
 use tower_http::cors::CorsLayer;
 use uuid::Uuid;
 
-pub fn router(service: ConversationService) -> Router {
+pub fn router(service: ConversationService, fixture: bool) -> Router {
+    let model = if fixture {
+        Some("mock-fixture".to_owned())
+    } else {
+        runtime::configured_model_id().ok()
+    };
     Router::new()
-        .route("/health", get(health))
+        .route(
+            "/health",
+            get(move || {
+                let model = model.clone();
+                async move { health(model, fixture) }
+            }),
+        )
         .route("/api/threads", get(list_threads).post(create_thread))
         .route(
             "/api/threads/:thread_id/title",
@@ -81,11 +92,12 @@ fn require_thread(service: &ConversationService, id: Uuid) -> ApiResult<()> {
         .map_err(|_| ApiError::not_found())
 }
 
-async fn health() -> Json<serde_json::Value> {
+fn health(model: Option<String>, fixture: bool) -> Json<serde_json::Value> {
     Json(json!({
         "status": "ok",
         "runtime": "opentopia-agent-core",
-        "model": runtime::configured_model_id().ok(),
+        "mode": if fixture { "fixture" } else { "live" },
+        "model": model,
     }))
 }
 

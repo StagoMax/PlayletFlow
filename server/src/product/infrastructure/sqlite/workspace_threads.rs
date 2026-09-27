@@ -3,8 +3,8 @@ use super::ProductDatabase;
 use crate::conversation_references::WorkspaceReference;
 use crate::product::application::idempotency::IdempotencyContext;
 use crate::product::application::workspace_threads::{
-    StoryboardAssetContext, StoryboardContext, StoryboardMediaContext, StoryboardResource,
-    StoryboardScriptContext, WorkspaceThreadStore,
+    StoryboardAssetContext, StoryboardContext, StoryboardFolderContext, StoryboardMediaContext,
+    StoryboardResource, StoryboardScriptContext, WorkspaceThreadStore,
 };
 use crate::product::domain::{
     GenerationSpec, ProductError, ProductResult, ProjectId, StoryboardId, WorkspaceThreadBinding,
@@ -186,6 +186,38 @@ impl WorkspaceThreadStore for SqliteWorkspaceThreadStore {
         .await
     }
 
+    async fn delete_binding(
+        &self,
+        project_id: ProjectId,
+        storyboard_id: StoryboardId,
+        thread_id: Uuid,
+    ) -> ProductResult<()> {
+        self.run(move |connection| {
+            let transaction = immediate(connection)?;
+            let deleted = transaction.execute(
+                "DELETE FROM workspace_thread_bindings
+                 WHERE project_id = ?1 AND storyboard_id = ?2 AND thread_id = ?3",
+                params![
+                    project_id.to_string(),
+                    storyboard_id.to_string(),
+                    thread_id.to_string()
+                ],
+            )?;
+            if deleted == 0 {
+                return Err(ProductError::NotFound);
+            }
+            append_event(
+                &transaction,
+                project_id,
+                "workspaceThread.deleted",
+                json!({ "storyboardId": storyboard_id, "threadId": thread_id }),
+            )?;
+            transaction.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
     async fn load_context(&self, thread_id: Uuid) -> ProductResult<Option<StoryboardContext>> {
         self.run(move |connection| {
             let header = connection
@@ -210,6 +242,7 @@ impl WorkspaceThreadStore for SqliteWorkspaceThreadStore {
                                 text: row.get(5)?,
                                 revision: row.get(6)?,
                             },
+                            folders: Vec::new(),
                             assets: Vec::new(),
                             media: Vec::new(),
                         })
@@ -219,6 +252,27 @@ impl WorkspaceThreadStore for SqliteWorkspaceThreadStore {
             let Some(mut context) = header else {
                 return Ok(None);
             };
+
+            let mut folders = connection.prepare(
+                "SELECT id, parent_id, name FROM workspace_nodes
+                 WHERE storyboard_id = ?1 AND project_id = ?2 AND kind = 'folder'
+                 ORDER BY position, id LIMIT 200",
+            )?;
+            context.folders = folders
+                .query_map(
+                    params![
+                        context.storyboard_id.to_string(),
+                        context.project_id.to_string()
+                    ],
+                    |row| {
+                        Ok(StoryboardFolderContext {
+                            id: row.get(0)?,
+                            parent_id: row.get(1)?,
+                            name: row.get(2)?,
+                        })
+                    },
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
 
             let mut assets = connection.prepare(
                 "SELECT ab.id, a.id, a.kind, a.name,

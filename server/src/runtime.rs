@@ -179,13 +179,7 @@ pub fn default_registry() -> ToolRegistry {
     ToolRegistry::default()
 }
 
-pub fn conversation_context() -> CompiledModelContext {
-    conversation_context_with_workspace(None)
-}
-
-pub fn conversation_context_with_workspace(
-    workspace_context: Option<String>,
-) -> CompiledModelContext {
+fn conversation_context_with_workspace(workspace_context: Option<String>) -> CompiledModelContext {
     let mut items = vec![ModelContextItem::text(
         ContextItemKind::BaseInstructions,
         ContextRole::System,
@@ -213,45 +207,24 @@ pub fn conversation_context_with_workspace(
     }
 }
 
-pub async fn run_once(
-    provider: Arc<dyn ModelProvider>,
-    tools: ToolRegistry,
-    workspace: PathBuf,
-    thread_id: Uuid,
-    turn_id: Uuid,
-    user_message_id: Uuid,
-    content: String,
-    conversation: Vec<opentopia_core::provider::ModelConversationMessage>,
-    sender: Option<opentopia_core::AgentEventSender>,
-) -> Result<opentopia_core::AgentTurnResult> {
-    run_once_with_context(
-        provider,
-        tools,
-        workspace,
-        thread_id,
-        turn_id,
-        user_message_id,
-        content,
-        conversation,
-        sender,
-        None,
-    )
-    .await
+pub(crate) struct RuntimeTurnRequest {
+    pub provider: Arc<dyn ModelProvider>,
+    pub tools: ToolRegistry,
+    pub workspace: PathBuf,
+    pub thread_id: Uuid,
+    pub turn_id: Uuid,
+    pub user_message_id: Uuid,
+    pub content: String,
+    pub conversation: Vec<opentopia_core::provider::ModelConversationMessage>,
+    pub sender: Option<opentopia_core::AgentEventSender>,
+    pub workspace_context: Option<String>,
+    pub cancellation: Option<CancellationToken>,
 }
 
-pub async fn run_once_with_context(
-    provider: Arc<dyn ModelProvider>,
-    tools: ToolRegistry,
-    workspace: PathBuf,
-    thread_id: Uuid,
-    turn_id: Uuid,
-    user_message_id: Uuid,
-    content: String,
-    conversation: Vec<opentopia_core::provider::ModelConversationMessage>,
-    sender: Option<opentopia_core::AgentEventSender>,
-    workspace_context: Option<String>,
+pub(crate) async fn run_once(
+    request: RuntimeTurnRequest,
 ) -> Result<opentopia_core::AgentTurnResult> {
-    run_once_with_context_and_cancellation(
+    let RuntimeTurnRequest {
         provider,
         tools,
         workspace,
@@ -262,28 +235,9 @@ pub async fn run_once_with_context(
         conversation,
         sender,
         workspace_context,
-        None,
-    )
-    .await
-}
-
-pub async fn run_once_with_context_and_cancellation(
-    provider: Arc<dyn ModelProvider>,
-    tools: ToolRegistry,
-    workspace: PathBuf,
-    thread_id: Uuid,
-    turn_id: Uuid,
-    user_message_id: Uuid,
-    content: String,
-    conversation: Vec<opentopia_core::provider::ModelConversationMessage>,
-    sender: Option<opentopia_core::AgentEventSender>,
-    workspace_context: Option<String>,
-    cancellation: Option<CancellationToken>,
-) -> Result<opentopia_core::AgentTurnResult> {
-    let model_context = match workspace_context {
-        Some(context) => conversation_context_with_workspace(Some(context)),
-        None => conversation_context(),
-    };
+        cancellation,
+    } = request;
+    let model_context = conversation_context_with_workspace(workspace_context);
     let mut capabilities = CapabilityProjection::deny_all();
     capabilities.tools.extend(tools.list());
     capabilities.workspace_roots.insert(workspace.clone());
@@ -349,11 +303,13 @@ mod tests {
 
     #[test]
     fn playletflow_provider_env_owns_the_public_configuration_contract() {
-        let mut settings = ProviderSettings::default();
-        settings.base_url = "https://legacy.invalid".into();
-        settings.model = "legacy-model".into();
-        settings.api_key_source = "OPENTOPIA_API_KEY".into();
-        settings.api_key_configured = false;
+        let mut settings = ProviderSettings {
+            base_url: "https://legacy.invalid".into(),
+            model: "legacy-model".into(),
+            api_key_source: "OPENTOPIA_API_KEY".into(),
+            api_key_configured: false,
+            ..ProviderSettings::default()
+        };
         let values = HashMap::from([
             (PLAYLETFLOW_LLM_API_KEY, "secret".to_owned()),
             (
@@ -373,9 +329,11 @@ mod tests {
 
     #[test]
     fn playletflow_provider_env_keeps_legacy_values_compatible() {
-        let mut settings = ProviderSettings::default();
-        settings.base_url = "https://legacy.example/v1".into();
-        settings.model = "legacy-model".into();
+        let mut settings = ProviderSettings {
+            base_url: "https://legacy.example/v1".into(),
+            model: "legacy-model".into(),
+            ..ProviderSettings::default()
+        };
         let values = HashMap::from([
             ("OPENTOPIA_OPENAI_BASE_URL", settings.base_url.clone()),
             ("OPENTOPIA_MODEL", settings.model.clone()),
@@ -441,17 +399,19 @@ mod tests {
         let provider: Arc<dyn ModelProvider> = Arc::new(ToolCallingProvider(AtomicUsize::new(0)));
         let mut tools = default_registry();
         tools.register(Arc::new(RuntimeProbeTool));
-        let result = run_once(
+        let result = run_once(RuntimeTurnRequest {
             provider,
             tools,
-            std::env::temp_dir(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            "Call the probe tool.".into(),
-            Vec::new(),
-            None,
-        )
+            workspace: std::env::temp_dir(),
+            thread_id: Uuid::new_v4(),
+            turn_id: Uuid::new_v4(),
+            user_message_id: Uuid::new_v4(),
+            content: "Call the probe tool.".into(),
+            conversation: Vec::new(),
+            sender: None,
+            workspace_context: None,
+            cancellation: None,
+        })
         .await
         .expect("the tool loop completes");
         assert!(result

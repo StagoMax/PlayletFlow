@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use opentopia_core::model::{
     AgentEvent, AgentEventPayload, ExperienceMode, Message, MessagePart, MessageRole, Thread,
 };
-use opentopia_core::provider::{ModelConversationMessage, ModelProvider};
+use opentopia_core::provider::ModelProvider;
 use opentopia_core::store::{SessionStore, SqliteSessionStore};
 use opentopia_core::tools::ToolRegistry;
 use std::collections::HashMap;
@@ -88,6 +88,17 @@ impl ConversationService {
         self.store
             .get_thread(thread_id)?
             .ok_or_else(|| anyhow!("thread not found"))
+    }
+
+    pub async fn delete_thread(&self, thread_id: Uuid) -> Result<()> {
+        if let Some(turn) = self.active.lock().await.remove(&thread_id) {
+            turn.cancellation.cancel();
+        }
+        self.streams.lock().await.remove(&thread_id);
+        // Deleting an already absent runtime thread lets a product binding
+        // deletion be retried after a partial cross-database failure.
+        self.store.delete_thread(thread_id)?;
+        Ok(())
     }
 
     pub async fn subscribe(&self, thread_id: Uuid) -> broadcast::Receiver<AgentEvent> {
@@ -217,17 +228,20 @@ impl ConversationService {
         }
         let service = self.clone();
         tokio::spawn(async move {
-            service
-                .drive_turn(
-                    thread_id,
-                    turn_id,
-                    user.id,
-                    content,
-                    history::project_history(&prior, &prior_events),
-                    trusted_context,
-                    cancellation,
-                )
-                .await;
+            let request = runtime::RuntimeTurnRequest {
+                provider: service.provider.clone(),
+                tools: service.tools.clone(),
+                workspace: service.workspace.clone(),
+                thread_id,
+                turn_id,
+                user_message_id: user.id,
+                content,
+                conversation: history::project_history(&prior, &prior_events),
+                sender: None,
+                workspace_context: trusted_context,
+                cancellation: Some(cancellation),
+            };
+            service.drive_turn(request).await;
             service.active.lock().await.remove(&thread_id);
         });
         Ok((user, turn_id))
@@ -246,16 +260,9 @@ impl ConversationService {
         Ok(true)
     }
 
-    async fn drive_turn(
-        &self,
-        thread_id: Uuid,
-        turn_id: Uuid,
-        user_message_id: Uuid,
-        content: String,
-        conversation: Vec<ModelConversationMessage>,
-        trusted_context: Option<String>,
-        cancellation: CancellationToken,
-    ) {
+    async fn drive_turn(&self, mut request: runtime::RuntimeTurnRequest) {
+        let thread_id = request.thread_id;
+        let turn_id = request.turn_id;
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let sink = self.clone();
         let persistence = tokio::spawn(async move {
@@ -265,20 +272,8 @@ impl ConversationService {
                 }
             }
         });
-        let result = runtime::run_once_with_context_and_cancellation(
-            self.provider.clone(),
-            self.tools.clone(),
-            self.workspace.clone(),
-            thread_id,
-            turn_id,
-            user_message_id,
-            content,
-            conversation,
-            Some(sender),
-            trusted_context,
-            Some(cancellation),
-        )
-        .await;
+        request.sender = Some(sender);
+        let result = runtime::run_once(request).await;
         let _ = persistence.await;
         if let Err(error) = result {
             let _ = self
