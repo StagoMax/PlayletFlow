@@ -1,4 +1,4 @@
-use super::volcengine_response::{decode, network_error};
+use super::volcengine_response::{bounded_field, decode, network_error};
 use crate::product::application::generation::{
     GenerationOutput, GenerationPoll, GenerationProvider, GenerationRequest, GenerationSubmission,
 };
@@ -302,16 +302,38 @@ struct VideoOutput {
 #[derive(Deserialize)]
 struct ProviderError {
     code: Option<String>,
+    message: Option<String>,
 }
 
 fn video_poll(response: VideoTaskResponse) -> ProductResult<GenerationPoll> {
     match response.status.as_str() {
         "queued" | "running" => Ok(GenerationPoll::Pending),
         "failed" | "cancelled" | "expired" => {
-            if let Some(code) = response.error.and_then(|error| error.code) {
-                eprintln!("Seedance task ended with provider error code {code}");
-            }
-            Ok(GenerationPoll::Failed)
+            let detail = response.error.and_then(|error| {
+                let code = error
+                    .code
+                    .as_deref()
+                    .and_then(|value| bounded_field(value, 128));
+                let message = error
+                    .message
+                    .as_deref()
+                    .and_then(|value| bounded_field(value, 512));
+                match (code, message) {
+                    (Some(code), Some(message)) => Some(format!("{message}（{code}）")),
+                    (Some(code), None) => Some(format!("错误代码：{code}")),
+                    (None, Some(message)) => Some(message),
+                    (None, None) => None,
+                }
+            });
+            let fallback = match response.status.as_str() {
+                "cancelled" => "视频生成任务已取消。",
+                "expired" => "视频生成任务已过期，请重新生成。",
+                _ => "视频生成服务未能完成任务。",
+            };
+            Ok(GenerationPoll::Failed(detail.map_or_else(
+                || fallback.to_owned(),
+                |detail| format!("视频生成失败：{detail}"),
+            )))
         }
         "succeeded" => {
             let url = response
@@ -444,5 +466,17 @@ mod tests {
             Some((1280, 720))
         );
         assert_eq!(video_dimensions(Some("720p"), Some("adaptive")), None);
+    }
+
+    #[test]
+    fn failed_video_task_keeps_provider_reason() {
+        let response = serde_json::from_str::<VideoTaskResponse>(
+            r#"{"status":"failed","error":{"code":"InvalidImage","message":"首帧图片不符合要求"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            video_poll(response).unwrap(),
+            GenerationPoll::Failed("视频生成失败：首帧图片不符合要求（InvalidImage）".into())
+        );
     }
 }

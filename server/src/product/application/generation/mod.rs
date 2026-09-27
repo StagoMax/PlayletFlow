@@ -97,7 +97,7 @@ pub struct GenerationOutput {
 pub enum GenerationPoll {
     Pending,
     Succeeded(GenerationOutput),
-    Failed,
+    Failed(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]

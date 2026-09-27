@@ -51,7 +51,7 @@ fn provider_error(status: StatusCode, request_id: Option<String>, body: &str) ->
     }
 }
 
-fn bounded_field(value: &str, max_chars: usize) -> Option<String> {
+pub(super) fn bounded_field(value: &str, max_chars: usize) -> Option<String> {
     let value = value
         .chars()
         .filter(|character| !character.is_control())
@@ -93,6 +93,15 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "火山方舟拒绝生成请求（HTTP 400）（Request ID: ark-request-456）"
+        );
+    }
+
+    #[test]
+    fn oversized_provider_request_explains_http_413() {
+        let error = provider_error(StatusCode::PAYLOAD_TOO_LARGE, None, "not json");
+        assert_eq!(
+            error.to_string(),
+            "火山方舟拒绝生成请求（HTTP 413）：请求内容过大，请减少参考图片数量或压缩图片后重试"
         );
     }
 

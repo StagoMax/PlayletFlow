@@ -259,12 +259,18 @@ impl CloudGenerationService {
                         self.save(&record, ObjectWriteMode::Upsert).await?;
                         return self.persist_pending_output(record).await;
                     }
-                    Ok(GenerationPoll::Failed) => {
-                        fail(&mut record, "generation provider processing failed");
+                    Ok(GenerationPoll::Failed(reason)) => {
+                        fail(&mut record, &reason);
                         self.save(&record, ObjectWriteMode::Upsert).await?;
                     }
                     Err(ProductError::DependencyUnavailable(cause)) => {
                         eprintln!("generation poll deferred for {}: {cause}", record.id);
+                    }
+                    Err(cause @ ProductError::ProviderRejected { .. }) => {
+                        let public_error = cause.to_string();
+                        eprintln!("generation poll failed for {}: {public_error}", record.id);
+                        fail(&mut record, &public_error);
+                        self.save(&record, ObjectWriteMode::Upsert).await?;
                     }
                     Err(cause) => {
                         eprintln!("generation poll failed for {}: {cause}", record.id);

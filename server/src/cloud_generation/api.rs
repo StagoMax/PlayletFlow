@@ -155,7 +155,7 @@ impl From<ProductError> for ApiError {
             }
             ProductError::ProviderRejected { .. } => {
                 eprintln!("generation provider rejected request: {error}");
-                Self::new(StatusCode::BAD_GATEWAY, "generation request failed")
+                Self::new(StatusCode::BAD_GATEWAY, error.to_string())
             }
         }
     }

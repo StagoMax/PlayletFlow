@@ -237,11 +237,11 @@ impl GenerationMonitor {
                         }
                     }
                 }
-                Ok(GenerationPoll::Failed) => {
+                Ok(GenerationPoll::Failed(reason)) => {
                     self.repository
                         .mark_running_failed(GenerationFailure {
                             job: running.job,
-                            public_error: PUBLIC_RESULT_ERROR.into(),
+                            public_error: reason,
                         })
                         .await?;
                     GenerationMonitorOutcome::Failed { job_id }
@@ -250,6 +250,17 @@ impl GenerationMonitor {
                     eprintln!("generation provider poll deferred for {job_id}: {error}");
                     self.repository.mark_polled(&running.job).await?;
                     GenerationMonitorOutcome::Pending { job_id }
+                }
+                Err(error @ ProductError::ProviderRejected { .. }) => {
+                    let public_error = error.to_string();
+                    eprintln!("generation provider poll failed for {job_id}: {public_error}");
+                    self.repository
+                        .mark_running_failed(GenerationFailure {
+                            job: running.job,
+                            public_error,
+                        })
+                        .await?;
+                    GenerationMonitorOutcome::Failed { job_id }
                 }
                 Err(error) => {
                     eprintln!("generation provider poll failed for {job_id}: {error}");

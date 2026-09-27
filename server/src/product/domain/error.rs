@@ -49,8 +49,20 @@ impl Display for ProductError {
                     write!(formatter, "，{code}")?;
                 }
                 formatter.write_str("）")?;
+                if *status == 413 {
+                    formatter.write_str("：请求内容过大，请减少参考图片数量或压缩图片后重试")?;
+                }
                 if let Some(message) = message {
-                    write!(formatter, "：{message}")?;
+                    write!(
+                        formatter,
+                        "{}{}",
+                        if *status == 413 {
+                            "；服务返回："
+                        } else {
+                            "："
+                        },
+                        message
+                    )?;
                 }
                 if let Some(request_id) = request_id {
                     write!(formatter, "（Request ID: {request_id}）")?;
