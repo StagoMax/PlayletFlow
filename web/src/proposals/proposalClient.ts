@@ -6,6 +6,10 @@ import type {
   ProposalStatus,
   ResolveProposalRequest,
 } from "../productApi/generated";
+import { cloudWorkspaceKey, flushCloudWorkspace, readCloudWorkspace } from "../workspace/cloudWorkspaceSync";
+import { hydrateBrowserWorkspaceMedia, saveBrowserWorkspace } from "../workspace/browserWorkspaceStorage";
+import type { WorkspaceSnapshot } from "../workspace/types";
+import { inputPayloads } from "../generation/cloudGenerationClient";
 
 export interface ProposalClient {
   listGenerationModels(signal?: AbortSignal): Promise<GenerationModel[]>;
@@ -65,11 +69,40 @@ export function createProposalClient(baseUrl = "/api/v1"): ProposalClient {
         `${baseUrl}/projects/${segment(projectId)}/generation-jobs/${segment(jobId)}`,
         { signal },
       ),
-    apply: (projectId, proposalId, body, idempotencyKey, signal) =>
-      request<ApplyProposalResponse>(
+    apply: async (projectId, proposalId, body, idempotencyKey, signal) => {
+      if (import.meta.env.PROD) await flushCloudWorkspace();
+      let commandBody: ResolveProposalRequest & { inputs?: Awaited<ReturnType<typeof inputPayloads>> } = body;
+      if (import.meta.env.PROD) {
+        const proposal = await request<ChangeProposal>(
+          `${baseUrl}/projects/${segment(projectId)}/proposals/${segment(proposalId)}`, { signal },
+        );
+        if (proposal.target.type !== "script") {
+          const snapshot = await hydrateBrowserWorkspaceMedia(
+            (await readCloudWorkspace()) as WorkspaceSnapshot,
+          );
+          const availableMedia = [
+            ...Object.values(snapshot.objectMedia ?? {}),
+            ...Object.values(snapshot.workspaces).flatMap((workspace) =>
+              [...workspace.assetGroups, ...workspace.videoGroups].flatMap((group) => group.items.map((item) => item.media))),
+          ];
+          const input = proposal.proposedInput ?? { type: "textOnly" as const };
+          commandBody = { ...body, inputs: await inputPayloads({ ...body.generation, input }, availableMedia, [], signal) };
+        }
+      }
+      const result = await request<ApplyProposalResponse>(
         `${baseUrl}/projects/${segment(projectId)}/proposals/${segment(proposalId)}/apply`,
-        command(body, idempotencyKey, signal),
-      ),
+        command(commandBody, idempotencyKey, signal),
+      );
+      if (import.meta.env.PROD) {
+        const snapshot = await readCloudWorkspace();
+        if (snapshot) {
+          const hydrated = await hydrateBrowserWorkspaceMedia(snapshot);
+          saveBrowserWorkspace(hydrated, false);
+          window.dispatchEvent(new CustomEvent<WorkspaceSnapshot>("videoflow:cloud-workspace-updated", { detail: hydrated }));
+        }
+      }
+      return result;
+    },
     reject: (projectId, proposalId, body, idempotencyKey, signal) =>
       request<ChangeProposal>(
         `${baseUrl}/projects/${segment(projectId)}/proposals/${segment(proposalId)}/reject`,
@@ -92,7 +125,11 @@ function segment(value: string) {
 }
 
 async function request<T>(url: string, init: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  const response = await fetch(url, {
+    ...init,
+    headers: { ...(init.headers as Record<string, string> | undefined),
+      ...(import.meta.env.PROD ? { "X-Videoflow-Workspace-Key": cloudWorkspaceKey() } : {}) },
+  });
   if (response.ok) return response.json() as Promise<T>;
 
   let message = `${response.status} ${response.statusText}`;

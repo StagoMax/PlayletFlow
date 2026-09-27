@@ -1,6 +1,6 @@
 import type { GenerationJob, StoryboardScript } from "../productApi/generated";
 import type { NavigatorGroup, StoryboardWorkspace, WorkspaceSnapshot } from "./types";
-import { cloneNavigatorGroup, copyStoryboardWorkspace, hydrateFixtureStoryboards } from "./fixtureStoryboardSnapshots";
+import { cloneNavigatorGroup, cloneStoryboardWorkspace, hydrateFixtureStoryboards } from "./fixtureStoryboardSnapshots";
 import { createSnapshot, generationModels } from "./fixtureWorkspaceData";
 import { withStoryboardOrder, withoutStoryboard } from "./storyboardOrder";
 import { createCloudGenerationClient } from "../generation/cloudGenerationClient";
@@ -8,6 +8,8 @@ import { appendTreeNode, createNavigationTree, findFolder, findTreeNode, mergeWo
 import { createStoryboardClient } from "../storyboards/storyboardClient";
 import { createBrowserStoryboardClient } from "../storyboards/browserStoryboardClient";
 import { hydrateBrowserWorkspaceMedia, loadBrowserWorkspace, saveBrowserWorkspace } from "./browserWorkspaceStorage";
+import { initializeCloudWorkspace } from "./cloudWorkspaceSync";
+import { copyBrowserMediaFile } from "./browserMediaFiles";
 import { welcomeSelection, welcomeStoryboardId } from "./welcomeWorkspace";
 import type { WorkspaceClient } from "./workspaceClient";
 import {
@@ -43,10 +45,16 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "live"
   let snapshot = browserWorkspace
     ? loadBrowserWorkspace()
     : mode === "acceptance" ? createSnapshot(200, 136) : mode === "live" ? createSnapshot(0) : createSnapshot();
+  if (browserWorkspace) {
+    window.addEventListener("videoflow:cloud-workspace-updated", (event) => {
+      snapshot = (event as CustomEvent<WorkspaceSnapshot>).detail;
+    });
+  }
   const setSnapshot = (next: WorkspaceSnapshot) => {
     snapshot = next;
     if (browserWorkspace) {
-      const latestMedia = loadBrowserWorkspace().objectMedia;
+      const latestMedia = Object.fromEntries(Object.entries(loadBrowserWorkspace().objectMedia ?? {}).filter(([, media]) =>
+        media.owner.type !== "storyboard" || Boolean(next.workspaces[media.owner.storyboardId])));
       saveBrowserWorkspace({ ...next, objectMedia: { ...next.objectMedia, ...latestMedia } });
     }
   };
@@ -107,8 +115,9 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "live"
       else if (signal.aborted) throw signal.reason;
       if (mode === "error") throw new Error("无法加载工作区数据，请检查网络后重试。");
       if (browserWorkspace) {
+        snapshot = await initializeCloudWorkspace(snapshot);
         snapshot = await hydrateBrowserWorkspaceMedia(snapshot);
-        saveBrowserWorkspace(snapshot);
+        saveBrowserWorkspace(snapshot, false);
         return snapshot;
       }
       if (mode === "live" || mode === "ready") {
@@ -160,13 +169,20 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "live"
     async duplicateStoryboard(projectId, storyboardId, idempotencyKey, signal) {
       const storyboard = await storyboardClient.duplicate(projectId, storyboardId, idempotencyKey, signal);
       const source = requireWorkspace(snapshot, projectId, storyboardId);
-      const workspace = copyStoryboardWorkspace(source, storyboard);
+      const sourceObjectMedia = browserWorkspace
+        ? loadBrowserWorkspace().objectMedia ?? {}
+        : snapshot.objectMedia ?? {};
+      const cloned = cloneStoryboardWorkspace(source, storyboard, sourceObjectMedia, !browserWorkspace);
+      if (browserWorkspace) {
+        await Promise.all(cloned.mediaFiles.map(([sourceId, targetId]) => copyBrowserMediaFile(sourceId, targetId)));
+      }
+      const { workspace, objectMedia } = cloned;
       try { window.localStorage.setItem(`videoflow:storyboard-source:${storyboard.id}`, storyboardId); } catch { /* storage unavailable */ }
       const storyboards = [...snapshot.storyboards];
       const index = storyboards.findIndex((item) => item.id === storyboardId);
       storyboards.splice(index + 1, 0, storyboard);
-      setSnapshot(withStoryboardOrder(snapshot, storyboards, { [storyboard.id]: workspace }));
-      return { storyboard, workspace };
+      setSnapshot(withStoryboardOrder({ ...snapshot, objectMedia: { ...snapshot.objectMedia, ...objectMedia } }, storyboards, { [storyboard.id]: workspace }));
+      return { storyboard, workspace, objectMedia };
     },
     async reorderStoryboard(projectId, storyboardId, request, idempotencyKey, signal) {
       const updated = await storyboardClient.reorder(projectId, storyboardId, request, idempotencyKey, signal);

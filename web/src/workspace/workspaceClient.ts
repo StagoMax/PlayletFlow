@@ -41,6 +41,7 @@ export type CreatedWorkspaceStoryboard = CreateStoryboardResponse & {
 export type DuplicatedWorkspaceStoryboard = {
   storyboard: StoryboardDetail;
   workspace: StoryboardWorkspace;
+  objectMedia?: Record<string, MediaItem>;
 };
 
 export interface WorkspaceClient {

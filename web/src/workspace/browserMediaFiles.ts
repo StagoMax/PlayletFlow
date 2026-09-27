@@ -28,6 +28,30 @@ export async function saveBrowserMediaFile(mediaId: string, file: Blob) {
   }
 }
 
+export async function copyBrowserMediaFile(sourceMediaId: string, targetMediaId: string) {
+  const database = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(storeName, "readwrite");
+      const store = transaction.objectStore(storeName);
+      const request = store.get(sourceMediaId);
+      request.onsuccess = () => {
+        if (!request.result) {
+          transaction.abort();
+          reject(new Error("原片段的媒体文件缺失，无法完成复制。"));
+          return;
+        }
+        store.put(request.result, targetMediaId);
+      };
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } finally {
+    database.close();
+  }
+}
+
 export async function browserMediaFileUrl(mediaId: string): Promise<string | null> {
   const cached = urls.get(mediaId);
   if (cached) return cached;

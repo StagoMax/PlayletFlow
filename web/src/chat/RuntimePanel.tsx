@@ -80,23 +80,33 @@ export function RuntimePanel({
 
   useEffect(() => {
     let active = true;
-    void api.runtimeInfo()
-      .then((info) => {
-        if (active) {
-          setRuntimeModel(info.model);
-          setFixtureRuntime(info.mode === "fixture");
+    let retryTimer: number | undefined;
+    setRuntimeModelLoading(true);
+
+    const loadRuntimeInfo = async (attempt: number) => {
+      try {
+        const info = await api.runtimeInfo();
+        if (!active) return;
+        setRuntimeModel(info.model);
+        setFixtureRuntime(info.mode === "fixture");
+        setRuntimeModelLoading(false);
+      } catch {
+        if (!active) return;
+        if (attempt < 1) {
+          retryTimer = window.setTimeout(() => void loadRuntimeInfo(attempt + 1), 1_000);
+          return;
         }
-      })
-      .catch(() => {
-        if (active) setRuntimeModel(null);
-      })
-      .finally(() => {
-        if (active) setRuntimeModelLoading(false);
-      });
+        setRuntimeModel(null);
+        setRuntimeModelLoading(false);
+      }
+    };
+
+    void loadRuntimeInfo(0);
     return () => {
       active = false;
+      window.clearTimeout(retryTimer);
     };
-  }, []);
+  }, [connectionAttempt]);
 
   useEffect(() => {
     const version = ++requestVersion.current;

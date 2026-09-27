@@ -13,7 +13,7 @@ import { GenerationControls, GenerationImageSizeControl, type GenerationMediaOpt
 import { createDefaultGenerationOptions, imageGenerationInput, type GenerationImageFile } from "../generation/generationOptions";
 import type { GenerationJob, GenerationOptions, MediaKind } from "../productApi/generated";
 import type { FormEvent, KeyboardEvent } from "react";
-import { parseMediaPromptDraft, sameMediaPromptDraft, synchronizeMediaPromptDraft } from "./mediaPromptDraft";
+import { parseMediaPromptDraft, reconcileMediaPromptReferences, sameMediaPromptDraft, synchronizeMediaPromptDraft } from "./mediaPromptDraft";
 import { loadMediaPromptDraft, saveMediaPromptDraft } from "./mediaPromptDraftStore";
 import "./videoPromptComposer.css";
 
@@ -71,16 +71,24 @@ export function MediaPromptComposer({
   }, [initialPrompt]);
   useEffect(() => saveMediaPromptDraft(draftKey, initialPrompt, draft), [draft, draftKey, initialPrompt]);
   const prompt = draft.text;
+  const savedReferences = useMemo(() => reconcileMediaPromptReferences(draft.references, assets), [assets, draft.references]);
+  useEffect(() => {
+    if (savedReferences === draft.references) return;
+    setDraft((current) => {
+      const next = reconcileMediaPromptReferences(current.references, assets);
+      return next === current.references ? current : { ...current, references: next };
+    });
+  }, [assets, draft.references, savedReferences]);
   const references = useMemo(() => {
     const byId = new Map(assets.map((asset) => [asset.id, asset]));
-    return draft.references.flatMap((saved) => {
+    return savedReferences.flatMap((saved) => {
       const asset = byId.get(saved.id);
       return asset && asset.kind === saved.kind
         ? [{ ...asset, name: saved.name }]
         : [];
     });
-  }, [assets, draft.references]);
-  const missingReferences = draft.references.length !== references.length;
+  }, [assets, savedReferences]);
+  const missingReferences = savedReferences.length !== references.length;
   const [generation, setGeneration] = useState(() => createDefaultGenerationOptions(kind));
   const [submission, setSubmission] = useState<MediaSubmissionState>({ status: "idle" });
   const [undoing, setUndoing] = useState(false);

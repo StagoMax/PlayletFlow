@@ -2,6 +2,9 @@ import type { AgentEvent, Message, Thread, ToolResult } from "./types";
 import { mergeConversationEvents, mergeConversationMessages } from "./conversationMerge";
 import { threadTitleFromPrompt } from "./threadTitle";
 import { migrateLegacyMessageReferences } from "./chat/workspaceReference";
+import { cloudWorkspaceKey, flushCloudWorkspace, readCloudWorkspace } from "./workspace/cloudWorkspaceSync";
+import { hydrateBrowserWorkspaceMedia, saveBrowserWorkspace } from "./workspace/browserWorkspaceStorage";
+import type { WorkspaceSnapshot } from "./workspace/types";
 
 const threadListKey = "videoflow:threads:v1";
 const conversationKey = (threadId: string) => `videoflow:conversation:v1:${threadId}`;
@@ -104,6 +107,11 @@ export const cloudApi = {
     onEvent?: (event: AgentEvent) => void,
     signal?: AbortSignal,
   ): Promise<AgentEvent[]> => {
+    await flushCloudWorkspace();
+    const scope = read<{ projectId: string; storyboardId: string } | null>(
+      `videoflow:cloud-thread-scope:v1:${threadId}`, null,
+    );
+    if (!scope) throw new Error("会话未绑定片段，请重新打开该片段的 Agent 对话。");
     const prior = conversation(threadId);
     const received: AgentEvent[] = [];
     const receivedIds = new Set<string>();
@@ -141,9 +149,11 @@ export const cloudApi = {
     try {
       const response = await fetch("/api/turn", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream", "X-Videoflow-Workspace-Key": cloudWorkspaceKey() },
         body: JSON.stringify({
           threadId,
+          projectId: scope.projectId,
+          storyboardId: scope.storyboardId,
           message,
           messages: prior.messages.slice(-40),
           events: prior.events.slice(-160),
@@ -189,6 +199,12 @@ export const cloudApi = {
       if (result.message.id !== message.id) throw new Error("会话响应与请求不匹配");
       const events = mergeConversationEvents([], received);
       saveTurn(threadId, prior, message, events);
+      const updated = await readCloudWorkspace();
+      if (updated) {
+        const hydrated = await hydrateBrowserWorkspaceMedia(updated);
+        saveBrowserWorkspace(hydrated, false);
+        window.dispatchEvent(new CustomEvent<WorkspaceSnapshot>("videoflow:cloud-workspace-updated", { detail: hydrated }));
+      }
       return events;
     } catch (error) {
       if (signal?.aborted) return finishCancelled();

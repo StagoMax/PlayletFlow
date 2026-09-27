@@ -9,7 +9,7 @@ import type { WorkspaceGenerationJob } from "../workspace/workspaceClient";
 import type { GenerationImageFile } from "./generationOptions";
 import { blobBase64, fitGenerationImageBlob, prepareImageBlob } from "./imageInput";
 
-type InputPayload = {
+export type InputPayload = {
   mediaId: string;
   mimeType: string;
   dataBase64: string;
@@ -66,7 +66,7 @@ export function createCloudGenerationClient(baseUrl = "/api/v1"): CloudGeneratio
   };
 }
 
-async function inputPayloads(
+export async function inputPayloads(
   generation: GenerationOptions | null | undefined,
   availableMedia: readonly MediaItem[],
   imageFiles: readonly GenerationImageFile[],

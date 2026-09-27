@@ -21,10 +21,13 @@ export function withStoryboardOrder(
 export function withoutStoryboard(snapshot: WorkspaceSnapshot, storyboardId: string): WorkspaceSnapshot {
   const workspaces = { ...snapshot.workspaces };
   delete workspaces[storyboardId];
+  const objectMedia = Object.fromEntries(Object.entries(snapshot.objectMedia ?? {}).filter(([, media]) =>
+    media.owner.type !== "storyboard" || media.owner.storyboardId !== storyboardId));
   const ordered = snapshot.storyboards.filter((item) => item.id !== storyboardId);
   return withStoryboardOrder({
     ...snapshot,
     workspaces,
+    objectMedia,
     initialStoryboardId: snapshot.initialStoryboardId === storyboardId
       ? ordered[0]?.id ?? ""
       : snapshot.initialStoryboardId,

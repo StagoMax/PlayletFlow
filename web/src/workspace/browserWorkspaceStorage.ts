@@ -2,6 +2,7 @@ import type { MediaItem } from "../productApi/generated";
 import { createWelcomeWorkspace } from "./welcomeWorkspace";
 import type { WorkspaceSnapshot } from "./types";
 import { browserMediaFileUrl } from "./browserMediaFiles";
+import { queueCloudWorkspaceSave } from "./cloudWorkspaceSync";
 
 const key = "videoflow:browser-workspace:v1";
 const browserMediaPrefix = "browser-media:";
@@ -19,13 +20,15 @@ export function loadBrowserWorkspace(): WorkspaceSnapshot {
   return createWelcomeWorkspace();
 }
 
-export function saveBrowserWorkspace(snapshot: WorkspaceSnapshot) {
+export function saveBrowserWorkspace(snapshot: WorkspaceSnapshot, sync = true) {
   try {
     const objectMedia = Object.fromEntries(Object.entries(snapshot.objectMedia ?? {}).map(([objectId, media]) => [
       objectId,
       storedMedia(media),
     ]));
-    window.localStorage.setItem(key, JSON.stringify({ ...snapshot, objectMedia }));
+    const stored = { ...snapshot, objectMedia };
+    window.localStorage.setItem(key, JSON.stringify(stored));
+    if (sync && import.meta.env.PROD) queueCloudWorkspaceSave(stored);
   } catch (error) {
     console.warn("无法保存浏览器工作区", error);
   }

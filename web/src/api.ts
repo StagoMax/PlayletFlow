@@ -17,8 +17,8 @@ export type GenerateThreadTitleResponse = {
   updated: boolean;
 };
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetchWithTimeout(path, init);
+async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
+  const response = await fetchWithTimeout(path, init, timeoutMs);
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
     try {
@@ -31,7 +31,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const localApi = {
-  runtimeInfo: () => request<RuntimeInfo>("/health"),
+  runtimeInfo: () => request<RuntimeInfo>("/health", undefined, 12_000),
   threads: () => request<Thread[]>("/api/threads"),
   createThread: (title = "新会话") =>
     request<Thread>("/api/threads", {

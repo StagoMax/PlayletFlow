@@ -1,5 +1,9 @@
 import type { WorkspaceNode } from "../productApi/generated";
+import { workspaceComposerAssets } from "../composer/workspaceAssets";
+import { parseMediaPromptDraft, reconcileMediaPromptReferences } from "../preview/mediaPromptDraft";
+import { cloneStoryboardWorkspace } from "./fixtureStoryboardSnapshots";
 import { updateNodeUnseenUpdateAt } from "./resourceTree";
+import { createWelcomeWorkspace } from "./welcomeWorkspace";
 import { workspaceTreeFromNodes } from "./workspaceNodeClient";
 
 type CaseResult = { ok: boolean; message?: string };
@@ -7,6 +11,25 @@ type CaseResult = { ok: boolean; message?: string };
 const unseenUpdateAt = "2026-09-27T09:00:00Z";
 
 export const workspaceTestCases: Record<string, () => CaseResult> = {
+  "copied media prompts point to copied assets and old drafts recover unique references": () => {
+    const snapshot = createWelcomeWorkspace();
+    const source = snapshot.workspaces[snapshot.initialStoryboardId];
+    const copiedId = crypto.randomUUID();
+    const copied = cloneStoryboardWorkspace(source, { ...source.storyboard, id: copiedId }, snapshot.objectMedia ?? {});
+    const copiedAssets = workspaceComposerAssets(copied.workspace, copied.objectMedia);
+    const copiedAssetIds = new Set(copiedAssets.map((asset) => asset.id));
+    const sourceVideo = Object.values(snapshot.objectMedia ?? {}).find((media) => media.kind === "video" && media.prompt?.includes("引用资产："));
+    const copiedVideo = Object.values(copied.objectMedia).find((media) => media.kind === "video" && media.prompt?.includes("引用资产："));
+    if (!sourceVideo?.prompt || !copiedVideo?.prompt) return { ok: false, message: "reference-bearing video was not cloned" };
+    const originalReferences = parseMediaPromptDraft(sourceVideo.prompt).references;
+    const copiedReferences = parseMediaPromptDraft(copiedVideo.prompt).references;
+    const recovered = reconcileMediaPromptReferences(originalReferences, copiedAssets);
+    return copiedReferences.length === originalReferences.length
+      && copiedReferences.every((reference) => copiedAssetIds.has(reference.id) && !originalReferences.some((original) => original.id === reference.id))
+      && recovered.every((reference) => copiedAssetIds.has(reference.id))
+      ? { ok: true }
+      : { ok: false, message: "copied prompt or recovered draft still references source media" };
+  },
   "workspace nodes retain durable unseen AI updates until viewed": () => {
     const nodes: WorkspaceNode[] = [
       workspaceNode({ id: "folder", kind: "folder", name: "视频", objectType: null, targetType: null, targetId: null }),

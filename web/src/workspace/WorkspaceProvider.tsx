@@ -34,6 +34,16 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
   const [objectMedia, setObjectMedia] = useState<Record<string, MediaItem>>(initialData.objectMedia ?? {});
   useEffect(() => {
     if (!import.meta.env.PROD) return;
+    const adopt = (event: Event) => {
+      const snapshot = (event as CustomEvent<WorkspaceSnapshot>).detail;
+      setData(snapshot);
+      setObjectMedia(snapshot.objectMedia ?? {});
+    };
+    window.addEventListener("videoflow:cloud-workspace-updated", adopt);
+    return () => window.removeEventListener("videoflow:cloud-workspace-updated", adopt);
+  }, []);
+  useEffect(() => {
+    if (!import.meta.env.PROD) return;
     for (const [objectId, media] of Object.entries(objectMedia)) saveBrowserObjectMedia(objectId, media);
   }, [objectMedia]);
   const publishObjectMedia = useCallback((objectId: string, media: MediaItem) => {
@@ -282,6 +292,7 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
   }, [client, data.project.id]);
   const duplicateStoryboard = useCallback(async (storyboardId: string) => {
     const created = await client.duplicateStoryboard(data.project.id, storyboardId, crypto.randomUUID());
+    if (created.objectMedia) setObjectMedia((current) => ({ ...current, ...created.objectMedia }));
     setData((currentData) => {
       const index = currentData.storyboards.findIndex((item) => item.id === storyboardId);
       const storyboards = [...currentData.storyboards];
@@ -308,8 +319,7 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
       };
     });
   }, [client, data.project.id, data.storyboards, state.currentStoryboardId]);
-  const deleteStoryboard = useCallback(async () => {
-    const storyboardId = state.currentStoryboardId;
+  const deleteStoryboard = useCallback(async (storyboardId: string = state.currentStoryboardId) => {
     const index = data.storyboards.findIndex((item) => item.id === storyboardId);
     const source = data.storyboards[index];
     if (!source) throw new Error("片段不存在，请刷新后重试。");
@@ -325,7 +335,9 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
         { [created.storyboard.id]: created.workspace }));
     }
     await client.deleteStoryboard(data.project.id, storyboardId, source.revision);
-    dispatch({ type: "storyboardSelected", storyboardId: replacement.id });
+    if (storyboardId === state.currentStoryboardId) dispatch({ type: "storyboardSelected", storyboardId: replacement.id });
+    setObjectMedia((current) => Object.fromEntries(Object.entries(current).filter(([, media]) =>
+      media.owner.type !== "storyboard" || media.owner.storyboardId !== storyboardId)));
     setData((currentData) => withoutStoryboard(currentData, storyboardId));
   }, [client, data.project.id, data.storyboards, state.currentStoryboardId]);
   const reorderStoryboard = useCallback(async (

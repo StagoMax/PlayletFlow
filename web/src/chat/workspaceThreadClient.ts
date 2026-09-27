@@ -95,6 +95,7 @@ export function createFixtureWorkspaceThreadClient(runtime: RuntimeThreadCreator
         typeof binding.threadId === "string" && binding.threadId,
       ).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
       bindings.set(key, valid);
+      valid.forEach((binding) => localStorage.setItem(`videoflow:cloud-thread-scope:v1:${binding.threadId}`, JSON.stringify(scope)));
       return valid;
     } catch {
       return [];
@@ -116,6 +117,7 @@ export function createFixtureWorkspaceThreadClient(runtime: RuntimeThreadCreator
       const next = [binding, ...readBindings(scope).filter((item) => item.threadId !== binding.threadId)];
       bindings.set(key, next);
       localStorage.setItem(key, JSON.stringify(next));
+      localStorage.setItem(`videoflow:cloud-thread-scope:v1:${thread.id}`, JSON.stringify(scope));
       return binding;
     },
     async delete(scope, threadId) {
@@ -125,6 +127,7 @@ export function createFixtureWorkspaceThreadClient(runtime: RuntimeThreadCreator
       const next = current.filter((binding) => binding.threadId !== threadId);
       const key = keyFor(scope);
       localStorage.setItem(key, JSON.stringify(next));
+      localStorage.removeItem(`videoflow:cloud-thread-scope:v1:${threadId}`);
       bindings.set(key, next);
     },
   };
