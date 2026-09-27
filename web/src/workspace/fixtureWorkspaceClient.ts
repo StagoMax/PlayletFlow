@@ -14,6 +14,7 @@ import { welcomeSelection, welcomeStoryboardId } from "./welcomeWorkspace";
 import type { WorkspaceClient } from "./workspaceClient";
 import {
   createWorkspaceNodeClient,
+  copiedWorkspaceIds,
   ensurePersistedFolderPath,
   workspaceTreeFromNodes,
   workspaceTreeNodeFromNode,
@@ -122,7 +123,7 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "live"
       }
       if (mode === "live" || mode === "ready") {
         try {
-          setSnapshot(await hydrateFixtureStoryboards(snapshot, storyboardClient, signal));
+          setSnapshot(await hydrateFixtureStoryboards(snapshot, storyboardClient, signal, nodeClient));
         } catch (cause) {
           if (signal.aborted) throw cause;
           if (mode === "live") throw cause;
@@ -172,7 +173,20 @@ export function createFixtureWorkspaceClient(mode: WorkspaceFixtureMode = "live"
       const sourceObjectMedia = browserWorkspace
         ? loadBrowserWorkspace().objectMedia ?? {}
         : snapshot.objectMedia ?? {};
-      const cloned = cloneStoryboardWorkspace(source, storyboard, sourceObjectMedia, !browserWorkspace);
+      let copiedIds;
+      if (nodeClient) {
+        try {
+          const [sourceNodes, targetNodes] = await Promise.all([
+            nodeClient.list(projectId, storyboardId, signal),
+            nodeClient.list(projectId, storyboard.id, signal),
+          ]);
+          copiedIds = copiedWorkspaceIds(sourceNodes, targetNodes);
+        } catch (cause) {
+          if (signal?.aborted) throw cause;
+          console.warn("[workspace] copied resource IDs are unavailable", cause);
+        }
+      }
+      const cloned = cloneStoryboardWorkspace(source, storyboard, sourceObjectMedia, !browserWorkspace, copiedIds);
       if (browserWorkspace) {
         await Promise.all(cloned.mediaFiles.map(([sourceId, targetId]) => copyBrowserMediaFile(sourceId, targetId)));
       }

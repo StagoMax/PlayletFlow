@@ -3,12 +3,15 @@ import type { StoryboardClient } from "../storyboards/storyboardClient";
 import { remapMediaPromptReferenceIds } from "../preview/mediaPromptDraft";
 import { createNavigationTree } from "./resourceTree";
 import { withStoryboardOrder } from "./storyboardOrder";
+import type { CopiedWorkspaceIds, WorkspaceNodeClient } from "./workspaceNodeClient";
+import { copiedWorkspaceIds } from "./workspaceNodeClient";
 import type { NavigatorGroup, StoryboardWorkspace, WorkspaceSnapshot, WorkspaceTreeNode } from "./types";
 
 export async function hydrateFixtureStoryboards(
   snapshot: WorkspaceSnapshot,
   client: StoryboardClient,
   signal: AbortSignal,
+  nodeClient?: WorkspaceNodeClient | null,
 ): Promise<WorkspaceSnapshot> {
   const persisted = (await client.listAll(snapshot.project.id, signal))
     .filter((item) => snapshot.workspaces[item.id]
@@ -29,8 +32,21 @@ export async function hydrateFixtureStoryboards(
       // Local storage may be unavailable in a private browser context.
     }
     const source = sourceId ? workspaces[sourceId] : null;
+    let copiedIds: CopiedWorkspaceIds | undefined;
+    if (source && nodeClient) {
+      try {
+        const [sourceNodes, targetNodes] = await Promise.all([
+          nodeClient.list(snapshot.project.id, source.storyboard.id, signal),
+          nodeClient.list(snapshot.project.id, detail.id, signal),
+        ]);
+        copiedIds = copiedWorkspaceIds(sourceNodes, targetNodes);
+      } catch (cause) {
+        if (signal.aborted) throw cause;
+        console.warn("[workspace] copied resource IDs are unavailable", cause);
+      }
+    }
     workspaces[summary.id] = source
-      ? copyStoryboardWorkspace(source, detail)
+      ? copyStoryboardWorkspace(source, detail, copiedIds)
       : { storyboard: detail, assetGroups: [], videoGroups: [], navigationTree: createNavigationTree(detail.id, [], []) };
   }
   return withStoryboardOrder({
@@ -53,8 +69,8 @@ export function cloneNavigatorGroup(group: NavigatorGroup): NavigatorGroup {
   };
 }
 
-export function copyStoryboardWorkspace(source: StoryboardWorkspace, storyboard: StoryboardDetail): StoryboardWorkspace {
-  return cloneStoryboardWorkspace(source, storyboard, {}, true).workspace;
+export function copyStoryboardWorkspace(source: StoryboardWorkspace, storyboard: StoryboardDetail, copiedIds?: CopiedWorkspaceIds): StoryboardWorkspace {
+  return cloneStoryboardWorkspace(source, storyboard, {}, true, copiedIds).workspace;
 }
 
 export function cloneStoryboardWorkspace(
@@ -62,19 +78,20 @@ export function cloneStoryboardWorkspace(
   storyboard: StoryboardDetail,
   sourceObjectMedia: Readonly<Record<string, MediaItem>>,
   preserveCanonicalItemIds = false,
+  copiedIds?: CopiedWorkspaceIds,
 ): { workspace: StoryboardWorkspace; objectMedia: Record<string, MediaItem>; mediaFiles: Array<[string, string]> } {
   const nodeIds = new Map<string, string>();
   const mediaIds = new Map<string, string>();
   const mediaFiles: Array<[string, string]> = [];
   const remapNode = (id: string) => {
     let mapped = nodeIds.get(id);
-    if (!mapped) { mapped = crypto.randomUUID(); nodeIds.set(id, mapped); }
+    if (!mapped) { mapped = copiedIds?.nodes.get(id) ?? crypto.randomUUID(); nodeIds.set(id, mapped); }
     return mapped;
   };
   const remapMedia = (media: MediaItem, preferredId?: string): MediaItem => {
     if (media.owner.type === "asset") return { ...media };
     let id = mediaIds.get(media.id);
-    if (!id) { id = preferredId ?? crypto.randomUUID(); mediaIds.set(media.id, id); }
+    if (!id) { id = copiedIds?.media.get(media.id) ?? preferredId ?? crypto.randomUUID(); mediaIds.set(media.id, id); }
     const sourceFile = media.preview?.url.startsWith("browser-media:")
       ? media.preview.url.slice("browser-media:".length)
       : media.preview?.url.startsWith("blob:") ? media.id
@@ -98,8 +115,8 @@ export function cloneStoryboardWorkspace(
     nodeIds.set(`folder-${group.id}`, `folder-${groupId}`);
     for (const item of group.items) {
       if (preserveCanonicalItemIds) {
-        nodeIds.set(item.id, item.id);
-        mediaIds.set(item.media.id, item.media.id);
+        nodeIds.set(item.id, copiedIds?.media.get(item.id) ?? copiedIds?.nodes.get(item.id) ?? item.id);
+        mediaIds.set(item.media.id, copiedIds?.media.get(item.media.id) ?? item.media.id);
       }
       if (item.subject) nodeIds.set(`folder-${group.id}-${item.subject.id}`, `folder-${groupId}-${item.subject.id}`);
     }
@@ -108,10 +125,11 @@ export function cloneStoryboardWorkspace(
       id: groupId,
       items: group.items.map((item) => ({
         ...item,
-        id: preserveCanonicalItemIds ? item.id : remapNode(item.id),
+        id: remapNode(item.id),
         subject: item.subject ? { ...item.subject } : undefined,
         media: preserveCanonicalItemIds && item.media.owner.type === "storyboard"
-          ? { ...item.media, owner: { type: "storyboard" as const, storyboardId: storyboard.id },
+          ? { ...item.media, id: mediaIds.get(item.media.id) ?? item.media.id,
+            owner: { type: "storyboard" as const, storyboardId: storyboard.id },
             status: item.media.status === "processing" ? "placeholder" as const : item.media.status,
             generation: null }
           : remapMedia(item.media),

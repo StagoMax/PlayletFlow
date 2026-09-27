@@ -25,6 +25,53 @@ export interface WorkspaceNodeClient {
   markViewed(projectId: string, storyboardId: string, nodeId: string, body: MarkWorkspaceNodeViewedRequest): Promise<WorkspaceNode>;
 }
 
+export type CopiedWorkspaceIds = {
+  nodes: ReadonlyMap<string, string>;
+  media: ReadonlyMap<string, string>;
+};
+
+// Duplication preserves each node's position and parent structure. Pair nodes
+// through that structure because names need not be unique within a storyboard.
+export function copiedWorkspaceIds(source: readonly WorkspaceNode[], target: readonly WorkspaceNode[]): CopiedWorkspaceIds {
+  const children = (nodes: readonly WorkspaceNode[]) => {
+    const grouped = new Map<string | null, WorkspaceNode[]>();
+    for (const node of nodes) {
+      const siblings = grouped.get(node.parentId) ?? [];
+      siblings.push(node);
+      grouped.set(node.parentId, siblings);
+    }
+    for (const siblings of grouped.values()) siblings.sort((a, b) => a.position.localeCompare(b.position));
+    return grouped;
+  };
+  const sourceChildren = children(source);
+  const targetChildren = children(target);
+  const nodes = new Map<string, string>();
+  const media = new Map<string, string>();
+  const visit = (sourceParent: string | null, targetParent: string | null) => {
+    const from = sourceChildren.get(sourceParent) ?? [];
+    const to = targetChildren.get(targetParent) ?? [];
+    if (from.length !== to.length) throw new Error("复制片段的资源树与原片段不一致。");
+    from.forEach((node, index) => {
+      const copy = to[index];
+      const clearedDeletedMedia = node.targetType === "media" && copy.targetType === "empty" && !copy.targetId;
+      if (node.position !== copy.position || node.kind !== copy.kind
+        || node.objectType !== copy.objectType || (node.targetType !== copy.targetType && !clearedDeletedMedia)) {
+        throw new Error("复制片段的资源树与原片段不一致。");
+      }
+      nodes.set(node.id, copy.id);
+      if (node.targetType === "media" && node.targetId && copy.targetId) {
+        media.set(node.targetId, copy.targetId);
+      }
+      if (node.kind === "folder") visit(node.id, copy.id);
+    });
+  };
+  visit(null, null);
+  if (nodes.size !== source.length || nodes.size !== target.length) {
+    throw new Error("复制片段的资源树不完整。");
+  }
+  return { nodes, media };
+}
+
 export function createWorkspaceNodeClient(baseUrl = "/api/v1"): WorkspaceNodeClient {
   const collectionUrl = (projectId: string, storyboardId: string) =>
     `${baseUrl}/projects/${segment(projectId)}/storyboards/${segment(storyboardId)}/workspace-nodes`;

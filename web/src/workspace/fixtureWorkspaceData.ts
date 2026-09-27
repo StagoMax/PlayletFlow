@@ -56,6 +56,8 @@ function storyboardSummary(index: number, name: string): StoryboardSummary {
 
 type FixtureItem = {
   id: string;
+  mediaId?: string;
+  generationJobId?: string | null;
   name: string;
   navigationName?: string;
   subject?: { id: string; name: string };
@@ -85,7 +87,7 @@ function item(storyboardId: string, fixture: FixtureItem) {
     height,
   };
   const media: MediaItem = {
-    id: fixture.id,
+    id: fixture.mediaId ?? fixture.id,
     projectId: project.id,
     owner: { type: "storyboard", storyboardId },
     kind,
@@ -104,8 +106,8 @@ function item(storyboardId: string, fixture: FixtureItem) {
         ? { ...access, mimeType: "image/svg+xml" }
         : { ...access, url: FIXTURE_VIDEO_PREVIEW_URL, mimeType: FIXTURE_VIDEO_PREVIEW_MIME_TYPE }
       : null,
-    generation: {
-      jobId: `job-${fixture.id}`,
+    generation: fixture.generationJobId === null ? null : {
+      jobId: fixture.generationJobId ?? `job-${fixture.id}`,
       provider: "fixture",
       model: "Videoflow Preview",
       error: fixture.error ?? null,
@@ -189,7 +191,7 @@ function videoGroups(storyboardId: string, index: number): NavigatorGroup[] {
       name: "生成的视频",
       kind: "generatedVideo",
       items: [
-        item(storyboardId, { id: `video-draft-${suffix}`, name: "生成版本 03", description: "6 秒 · 24 fps · 1080p", label: "视频", prompt: "镜头缓慢前推，细雨与远处警示灯形成视差，人物保持自然步态", accent: "#d55383", kind: "video", role: "generatedVideo", width: 1920, height: 1080, durationMs: 6_000 }),
+        item(storyboardId, { id: `video-draft-${suffix}`, mediaId: `60000000-0000-4000-8000-${storyboardId.slice(-12)}`, generationJobId: null, name: "生成版本 03", description: "6 秒 · 24 fps · 1080p", label: "视频", prompt: "镜头缓慢前推，细雨与远处警示灯形成视差，人物保持自然步态", accent: "#d55383", kind: "video", role: "generatedVideo", width: 1920, height: 1080, durationMs: 6_000 }),
         item(storyboardId, { id: `video-alt-${suffix}`, name: "备选版本 02", description: "6 秒 · 24 fps · 1080p", label: "视频", prompt: "手持镜头轻微晃动，强调紧张感，结尾聚焦信号终端", accent: "#8d4fd1", kind: "video", role: "generatedVideo", width: 1920, height: 1080, durationMs: 6_000 }),
       ],
     },
@@ -230,4 +232,3 @@ export function createSnapshot(count = storyboardNames.length, initialIndex = 11
     initialStoryboardId: storyboards[Math.min(initialIndex, storyboards.length - 1)]?.id ?? "",
   };
 }
-
