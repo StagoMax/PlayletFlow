@@ -12,10 +12,15 @@
 *::-webkit-scrollbar-button { display: none; }
 *::-webkit-scrollbar-corner { background: transparent; }
 html, body, #root { min-height: 100%; }
-body { margin: 0; min-width: 320px; background: var(--bg); font-size: var(--font-size-body); }
+body { margin: 0; min-width: 320px; background: var(--bg); font-size: var(--font-size-body); cursor: default; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .48; }
+input:not([type]):not(:disabled),
+input:is([type="text"], [type="search"], [type="number"], [type="email"], [type="url"], [type="tel"], [type="password"]):not(:disabled),
+textarea:not(:disabled),
+[contenteditable="true"],
+[contenteditable="plaintext-only"] { cursor: text; }
 button, select, textarea { outline: none; }
 button:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible {
   outline: 2px solid var(--focus-ring);
