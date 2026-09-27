@@ -11,6 +11,8 @@ pnpm test:acceptance
 它不会复用本地体验所使用的真实 runtime（默认 `8788`）或开发页面（默认 `5173`）。
 每个端口的截图、trace 和 HTML 报告分别写入 `.e2e/results/<webPort>/` 与 `.e2e/report/<webPort>/`，并行运行不会清空其他 spec 的失败现场。
 
+这些 Playwright 场景使用 Vite 开发构建和本地 fixture 服务，验证 SQLite/本地产品路径及浏览器交互；它们不等同于 `VIDEOFLOW_CLOUD=1` 的 TOS 工作区验收。修改云端同步、工作区密钥、提案适配或云端工具时，需另行验证快照首次创建、修订冲突、错误反馈及片段作用域。
+
 六个产品验收场景均使用确定性 fixture，并按最能暴露真实回归的边界执行：
 
 | 场景 | 自动化用例 |
@@ -22,4 +24,4 @@ pnpm test:acceptance
 | AC-05 提示词确认只生成一次 | Rust 事务测试 `media_and_binding_apply_create_exactly_one_generation_job` |
 | AC-06 正确比例预览 | Playwright `AC-06：9:16 媒体缩略图裁切，悬停与主预览完整显示` |
 
-另有 `W2-D` 浏览器用例验证片段切换时创建独立会话、返回时恢复原线程绑定。测试专用服务端由 `--seed-demo-workspace` 写入 200 个固定片段，前端通过 `?fixture=acceptance` 固定以第 137 个片段为当前项。
+另有 `W2-D` 浏览器用例验证片段切换时创建独立会话、返回时恢复原线程绑定；`storyboard-actions.spec.ts` 覆盖复制、排序和从菜单删除指定片段；`object-media-workspace.spec.ts` 覆盖上传媒体刷新后仍可预览。测试专用服务端由 `--seed-demo-workspace` 写入 200 个固定片段，前端通过 `?fixture=acceptance` 固定以第 137 个片段为当前项。

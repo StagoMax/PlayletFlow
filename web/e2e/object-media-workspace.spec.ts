@@ -47,6 +47,9 @@ test("图片对象可上传并在刷新后继续预览及编辑生成提示词",
   await page.getByRole("button", { name, exact: true }).click();
   await expect(page.getByRole("img", { name: name })).toBeVisible();
   await expect(page.getByRole("button", { name, exact: true }).locator(".resource-tree__object-icon img")).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name, exact: true }).click();
+  await expect(page.getByRole("img", { name: name })).toBeVisible();
 });
 
 test("视频对象提供上传区域和视频生成输入", async ({ page }) => {
