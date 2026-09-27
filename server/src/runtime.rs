@@ -11,8 +11,9 @@ use opentopia_core::model_context::{
 use opentopia_core::policy::PermissionMode;
 use opentopia_core::provider::{
     configured_provider_from_settings, negotiate_provider_settings, ModelProvider,
+    ProviderNegotiationResult,
 };
-use opentopia_core::settings::{AppSettings, ProviderSettings};
+use opentopia_core::settings::{AppSettings, ProviderFeatureSupport, ProviderSettings};
 use opentopia_core::tools::ToolRegistry;
 #[cfg(test)]
 use opentopia_core::tools::{Tool, ToolInvocationContext};
@@ -73,6 +74,46 @@ pub async fn configured_provider() -> Result<Arc<dyn ModelProvider>> {
     let negotiation = negotiate_provider_settings(&settings)
         .await
         .context("model provider connection negotiation failed")?;
+    apply_negotiation(&mut settings, negotiation)?;
+    configured_provider_from_settings(&settings).ok_or_else(|| anyhow!(PROVIDER_CONFIG_HINT))
+}
+
+/// Cloud instances cache their provider after the first turn. Negotiate an
+/// unknown tool-stream capability once so a tool-capable turn can actually
+/// receive model deltas as they arrive. Keep the portable profile if the probe
+/// cannot establish support; it preserves compatibility with opaque relays.
+pub async fn configured_cloud_provider() -> Result<Arc<dyn ModelProvider>> {
+    let mut settings = provider_settings()?;
+    let streaming_support = settings
+        .active_adapter_profile()
+        .map(|profile| profile.tool_protocol.streaming_tools)
+        .unwrap_or(ProviderFeatureSupport::Unknown);
+    if streaming_support == ProviderFeatureSupport::Unknown {
+        match negotiate_provider_settings(&settings).await {
+            Ok(negotiation) => {
+                if let Err(error) = apply_negotiation(&mut settings, negotiation) {
+                    eprintln!(
+                        "cloud provider streaming probe could not confirm support: {error:#}"
+                    );
+                }
+            }
+            Err(error) => {
+                eprintln!("cloud provider streaming probe failed: {error:#}");
+            }
+        }
+    }
+    if settings.active_adapter_profile().is_none() {
+        if let Some(profile) = settings.provisional_adapter_profile_for_model(&settings.model) {
+            settings.apply_adapter_profile(profile);
+        }
+    }
+    configured_provider_from_settings(&settings).ok_or_else(|| anyhow!(PROVIDER_CONFIG_HINT))
+}
+
+fn apply_negotiation(
+    settings: &mut ProviderSettings,
+    negotiation: ProviderNegotiationResult,
+) -> Result<()> {
     if !negotiation.health.reachable || !negotiation.health.model_available {
         return Err(anyhow!(
             "model provider is unreachable or model is unavailable: {}",
@@ -96,20 +137,7 @@ pub async fn configured_provider() -> Result<Arc<dyn ModelProvider>> {
             }
         }
     }
-    configured_provider_from_settings(&settings).ok_or_else(|| anyhow!(PROVIDER_CONFIG_HINT))
-}
-
-/// Cloud instances are ephemeral, so connection negotiation must not run on
-/// every cold start. The first real turn uses OpenTopia's portable tool-capable
-/// profile; connection diagnostics remain available in the local setup path.
-pub fn configured_cloud_provider() -> Result<Arc<dyn ModelProvider>> {
-    let mut settings = provider_settings()?;
-    if settings.active_adapter_profile().is_none() {
-        if let Some(profile) = settings.provisional_adapter_profile_for_model(&settings.model) {
-            settings.apply_adapter_profile(profile);
-        }
-    }
-    configured_provider_from_settings(&settings).ok_or_else(|| anyhow!(PROVIDER_CONFIG_HINT))
+    Ok(())
 }
 
 pub fn configured_model_id() -> Result<String> {
@@ -294,8 +322,9 @@ mod tests {
     use opentopia_core::model::AgentEventPayload;
     use opentopia_core::provider::{
         MockProvider, ModelFinishReason, ModelRequest, ModelResponse, ProviderToolCall,
+        ProviderToolCandidate,
     };
-    use opentopia_core::settings::ProviderHealthCheck;
+    use opentopia_core::settings::{ProviderAuthKind, ProviderHealthCheck};
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -353,6 +382,56 @@ mod tests {
 
         assert_eq!(settings.base_url, DEFAULT_CHAT_BASE_URL);
         assert_eq!(settings.model, DEFAULT_CHAT_MODEL);
+    }
+
+    #[test]
+    fn negotiated_tool_stream_support_replaces_the_nonstreaming_cloud_fallback() {
+        let mut settings = ProviderSettings::default();
+        settings.auth = Some(ProviderAuthKind::None);
+        let mut profile = settings
+            .provisional_adapter_profile_for_model(&settings.model)
+            .expect("HTTP provider has a portable fallback");
+        assert_eq!(
+            profile.tool_protocol.streaming_tools,
+            ProviderFeatureSupport::Unknown
+        );
+        profile.tool_protocol.streaming_tools = ProviderFeatureSupport::Supported;
+        apply_negotiation(
+            &mut settings,
+            ProviderNegotiationResult {
+                health: ProviderHealthCheck {
+                    reachable: true,
+                    model_available: true,
+                    latency_ms: None,
+                    error: None,
+                    openai_compatibility: None,
+                },
+                adapter_profiles: vec![profile],
+            },
+        )
+        .expect("a healthy negotiation is applied");
+        assert_eq!(
+            settings
+                .active_adapter_profile()
+                .expect("the negotiated profile is active")
+                .tool_protocol
+                .streaming_tools,
+            ProviderFeatureSupport::Supported
+        );
+
+        let provider = configured_provider_from_settings(&settings)
+            .expect("the negotiated connection constructs a provider");
+        let mut request: ModelRequest =
+            serde_json::from_value(json!({})).expect("the minimal logical request has defaults");
+        request.tool_candidates.push(ProviderToolCandidate::direct(
+            "workspace_probe",
+            "A harmless test tool",
+            json!({ "type": "object", "properties": {} }),
+        ));
+        let prepared = provider
+            .prepare(Uuid::new_v4(), request)
+            .expect("the tool-capable request is prepared");
+        assert_eq!(prepared.body["stream"], true);
     }
 
     #[test]

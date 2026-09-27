@@ -329,7 +329,7 @@ async fn prepare_turn(
             if state.fixture {
                 Ok(Arc::new(MockProvider) as Arc<dyn ModelProvider>)
             } else {
-                runtime::configured_cloud_provider()
+                runtime::configured_cloud_provider().await
             }
         })
         .await
