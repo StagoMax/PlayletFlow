@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { folderPath } from "../workspace/resourceTree";
 import { Icon } from "../workspace/Icons";
+import { DeleteStoryboardDialog } from "../storyboards/DeleteStoryboardDialog";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import type { WorkspaceObjectType, WorkspaceTreeNode } from "../workspace/types";
 import { ResourceTree, type ResourceAction, type ResourceCreationIntent } from "./ResourceTree";
@@ -94,13 +95,18 @@ export function ContentNavigator({
       />
       {actionError ? <p className="resource-action-error" role="alert">{actionError}</p> : null}
 
-      {actionTarget ? (
+      {actionTarget?.root && actionTarget.action === "delete" ? (
+        <DeleteStoryboardDialog key={current.storyboard.id}
+          storyboard={current.storyboard}
+          lastStoryboard={data.storyboards.length === 1}
+          onCancel={() => setActionTarget(null)}
+          onDelete={async (storyboardId) => { await deleteStoryboard(storyboardId); setActionTarget(null); }} />
+      ) : actionTarget ? (
         <ResourceActionDialog key={`${actionTarget.action}:${actionTarget.node.id}`}
-          target={actionTarget} lastStoryboard={data.storyboards.length === 1}
+          target={actionTarget}
           onCancel={() => setActionTarget(null)}
           onConfirm={async (name) => {
             if (actionTarget.root && actionTarget.action === "rename") await renameStoryboard(name);
-            else if (actionTarget.root) await deleteStoryboard();
             else if (actionTarget.action === "rename") await renameNode(actionTarget.node.id, name);
             else await deleteNode(actionTarget.node.id);
             setActionTarget(null);
@@ -209,10 +215,9 @@ function CreateResourceDialog({
 }
 
 function ResourceActionDialog({
-  target, lastStoryboard, onCancel, onConfirm,
+  target, onCancel, onConfirm,
 }: {
   target: { node: WorkspaceTreeNode; action: "rename" | "delete"; root?: boolean };
-  lastStoryboard: boolean;
   onCancel: () => void;
   onConfirm: (name: string) => Promise<void>;
 }) {
@@ -246,9 +251,7 @@ function ResourceActionDialog({
           <span id="resource-action-title">{target.root ? isDelete ? "删除片段" : "重命名片段" : isDelete ? "删除资源" : "重命名资源"}</span>
           <small>{target.node.name}</small>
         </div>
-        {isDelete ? <p className="resource-dialog__message">确定删除“{target.node.name}”吗？{target.root
-          ? `片段内的脚本和所有资源也会删除。${lastStoryboard ? "系统会创建一个空白片段。" : ""}`
-          : target.node.kind === "folder" ? "文件夹内的所有资源也会删除。" : ""}</p> : (
+        {isDelete ? <p className="resource-dialog__message">确定删除“{target.node.name}”吗？{target.node.kind === "folder" ? "文件夹内的所有资源也会删除。" : ""}</p> : (
           <><label htmlFor="resource-action-name">名称</label>
             <input id="resource-action-name" value={name} maxLength={120} autoFocus
               onFocus={(event) => event.currentTarget.select()}

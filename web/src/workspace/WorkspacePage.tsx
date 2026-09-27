@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import type { ComposerAssetReference } from "../composer/types";
 import { workspaceComposerAssets } from "../composer/workspaceAssets";
 import { ContentNavigator } from "../navigator/ContentNavigator";
@@ -32,6 +32,13 @@ export type WorkspaceAssistantScope = {
 
 function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: ComponentType<WorkspaceAssistantScope> }) {
   const [assistantOpen, setAssistantOpen] = useState(true);
+  const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!import.meta.env.PROD) return;
+    const onSync = (event: Event) => setCloudSyncError((event as CustomEvent<string | null>).detail);
+    window.addEventListener("videoflow:cloud-workspace-sync", onSync);
+    return () => window.removeEventListener("videoflow:cloud-workspace-sync", onSync);
+  }, []);
   const panels = useWorkspacePanelWidths(assistantOpen);
   const assistantCloseButtonRef = useRef<HTMLButtonElement>(null);
   const {
@@ -42,6 +49,7 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
     dispatch,
     createStoryboard,
     duplicateStoryboard,
+    deleteStoryboard,
     reorderStoryboard,
     commitAppliedProposal,
     refreshNavigationTree,
@@ -88,6 +96,7 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
       } as CSSProperties}
     >
       <a className="skip-link" href="#workspace-main">跳到预览区</a>
+      {cloudSyncError ? <div role="alert" className="cloud-sync-error">云端保存失败：{cloudSyncError}</div> : null}
       <aside className="workspace-navigator" id="workspace-navigator">
         <header className="navigator-header">
           <div className="workspace-brand">
@@ -100,6 +109,7 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
           </div>
           <StoryboardPicker
             storyboards={data.storyboards}
+            details={Object.fromEntries(Object.entries(data.workspaces).map(([id, workspace]) => [id, workspace.storyboard]))}
             currentId={state.currentStoryboardId}
             onSelect={(storyboardId) => {
               const target = data.workspaces[storyboardId];
@@ -117,6 +127,7 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
             }}
             onCreate={(sourceStoryboardId, name) => createStoryboard({ sourceStoryboardId, name })}
             onDuplicate={duplicateStoryboard}
+            onDelete={deleteStoryboard}
             onReorder={reorderStoryboard}
           />
         </header>
