@@ -8,6 +8,117 @@ async function createFreshThread(page: Page) {
   await expect.poll(() => panel.getAttribute("data-thread-id")).not.toBe(previousThreadId);
 }
 
+test("会话列表支持右键删除，当前会话删除后自动切换", async ({ page }) => {
+  await page.goto("/?fixture=ready");
+  const panel = page.locator(".runtime-panel");
+  await expect(panel).toHaveAttribute("data-thread-id", /^[0-9a-f-]+$/u);
+  const firstId = await panel.getAttribute("data-thread-id");
+  await createFreshThread(page);
+  const secondId = await panel.getAttribute("data-thread-id");
+  const trigger = page.locator(".thread-trigger");
+
+  await trigger.click();
+  const menuHeight = await page.locator(".thread-menu").evaluate((element) => element.getBoundingClientRect().height);
+  await page.locator(`.thread-menu-item[data-thread-id="${firstId}"]`).click({ button: "right" });
+  await expect(page.locator(".thread-context-menu")).toHaveCSS("position", "fixed");
+  await expect(page.locator(".thread-menu .thread-context-menu")).toHaveCount(0);
+  expect(await page.locator(".thread-menu").evaluate((element) => element.getBoundingClientRect().height)).toBe(menuHeight);
+  await expect(page.getByRole("menuitem", { name: "删除会话" })).toBeVisible();
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("menuitem", { name: "删除会话" }).click();
+  await expect(panel).toHaveAttribute("data-thread-id", secondId!);
+  const deletedThread = await page.request.get(`/api/threads/${firstId}/messages`);
+  expect(deletedThread.status()).toBe(404);
+
+  await trigger.click();
+  await expect(page.locator(`.thread-menu-item[data-thread-id="${firstId}"]`)).toHaveCount(0);
+  await page.locator(`.thread-menu-item[data-thread-id="${secondId}"]`).click({ button: "right" });
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("menuitem", { name: "删除会话" }).click();
+  await expect.poll(() => panel.getAttribute("data-thread-id")).not.toBe(secondId);
+  await expect(panel).toHaveAttribute("data-thread-id", /^[0-9a-f-]+$/u);
+
+  await page.reload();
+  await expect(panel).toHaveAttribute("data-thread-id", /^[0-9a-f-]+$/u);
+  await trigger.click();
+  await expect(page.locator(`.thread-menu-item[data-thread-id="${secondId}"]`)).toHaveCount(0);
+});
+
+test("AI 对话收起后释放工作区，并通过悬浮入口恢复原状态", async ({ page }) => {
+  await page.goto("/?fixture=ready");
+  const panel = page.locator(".runtime-panel");
+  await expect(panel).toHaveAttribute("data-thread-id", /^[0-9a-f-]+$/u);
+  const threadId = await panel.getAttribute("data-thread-id");
+  const composer = page.getByRole("textbox", { name: "输入消息" });
+  await composer.fill("保留这段未发送的草稿");
+
+  const canvasWidthBefore = await page.locator(".workspace-canvas").evaluate((element) => (
+    element.getBoundingClientRect().width
+  ));
+  await page.getByRole("button", { name: "收起 AI 对话" }).click();
+
+  const launcher = page.getByRole("button", { name: "与 AI 对话" });
+  await expect(page.locator(".workspace-assistant")).toBeHidden();
+  await expect(launcher).toBeVisible();
+  await expect(launcher).toBeFocused();
+  const canvasWidthAfter = await page.locator(".workspace-canvas").evaluate((element) => (
+    element.getBoundingClientRect().width
+  ));
+  expect(canvasWidthAfter).toBeGreaterThan(canvasWidthBefore);
+
+  await launcher.click();
+  await expect(panel).toBeVisible();
+  await expect(panel).toHaveAttribute("data-thread-id", threadId!);
+  await expect(composer).toHaveText("保留这段未发送的草稿");
+  await expect(page.getByRole("button", { name: "收起 AI 对话" })).toBeFocused();
+});
+
+test("收起入口吸附右边界，并支持悬停展开和拖动定位", async ({ page }) => {
+  await page.goto("/?fixture=ready");
+  await page.getByRole("button", { name: "收起 AI 对话" }).click();
+  const launcher = page.getByRole("button", { name: "与 AI 对话" });
+  await expect(launcher).toBeVisible();
+  await launcher.evaluate((element: HTMLButtonElement) => element.blur());
+  await page.mouse.move(100, 100);
+
+  const viewport = page.viewportSize()!;
+  await expect.poll(async () => (await launcher.boundingBox())?.x).toBe(viewport.width - 52);
+  const compactBox = await launcher.boundingBox();
+  expect(compactBox).not.toBeNull();
+  await expect(launcher.locator("span")).toHaveCSS("visibility", "hidden");
+
+  await launcher.hover();
+  await expect.poll(async () => (await launcher.boundingBox())?.x).toBeLessThan(compactBox!.x - 60);
+  const expandedBox = await launcher.boundingBox();
+  expect(expandedBox).not.toBeNull();
+  expect(expandedBox!.x).toBeLessThan(compactBox!.x - 60);
+  expect(expandedBox!.width).toBeLessThan(140);
+  await expect(launcher.locator("span")).toHaveCSS("visibility", "visible");
+
+  const dragX = viewport.width - 24;
+  const dragStartY = expandedBox!.y + expandedBox!.height / 2;
+  const dragEndY = Math.max(40, dragStartY - 120);
+  await page.mouse.move(dragX, dragStartY);
+  await page.mouse.down();
+  await page.mouse.move(dragX, dragEndY, { steps: 5 });
+  await page.mouse.up();
+  await page.mouse.move(100, 100);
+
+  const movedBox = await launcher.boundingBox();
+  expect(movedBox).not.toBeNull();
+  expect(movedBox!.y).toBeLessThan(expandedBox!.y - 80);
+  await expect(page.locator(".workspace-assistant")).toBeHidden();
+
+  await launcher.click();
+  await expect(page.locator(".workspace-assistant")).toBeVisible();
+  await page.getByRole("button", { name: "收起 AI 对话" }).click();
+  await launcher.evaluate((element: HTMLButtonElement) => element.blur());
+  await page.mouse.move(100, 100);
+  const restoredBox = await launcher.boundingBox();
+  expect(restoredBox).not.toBeNull();
+  expect(Math.abs(restoredBox!.y - movedBox!.y)).toBeLessThanOrEqual(1);
+});
+
 test("Topia 式对话把一次 Turn 连续呈现并保持 Composer 交互", async ({ page }, testInfo) => {
   const browserErrors: string[] = [];
   let releaseTurnRequest!: () => void;
@@ -28,6 +139,8 @@ test("Topia 式对话把一次 Turn 连续呈现并保持 Composer 交互", asyn
   });
 
   await page.goto("/?fixture=ready");
+  await expect(page.getByText("当前连接的是演示后端，只会固定回显消息，不会调用真实模型或分镜工具。")).toBeVisible();
+  await expect(page.getByRole("status", { name: "当前 Agent 模型" })).toContainText("mock-fixture");
   await createFreshThread(page);
 
   const composer = page.getByRole("textbox", { name: "输入消息" });
@@ -66,6 +179,8 @@ test("Topia 式对话把一次 Turn 连续呈现并保持 Composer 交互", asyn
 
   const initialHeight = await composer.evaluate((element) => element.getBoundingClientRect().height);
   await composer.fill("第一行\n第二行\n第三行\n第四行");
+  await expect.poll(() => composer.evaluate((element) => element.getBoundingClientRect().height))
+    .toBeGreaterThan(initialHeight);
   const expandedHeight = await composer.evaluate((element) => element.getBoundingClientRect().height);
   expect(expandedHeight).toBeGreaterThan(initialHeight);
   expect(expandedHeight).toBeLessThanOrEqual(150);

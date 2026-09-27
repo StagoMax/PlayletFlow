@@ -10,8 +10,9 @@
     "typecheck:preview": "pnpm contract:check && tsc -p tsconfig.preview.json",
     "test:assets-proposals": "node scripts/test-assets-proposals.mjs",
     "test:preview": "node scripts/test-preview.mjs",
+    "test:conversation-activity": "node scripts/test-conversation-activity.mjs",
     "test:e2e": "node scripts/run-e2e-specs.mjs",
-    "test:acceptance": "cargo test --manifest-path ../server/Cargo.toml && pnpm test:e2e",
+    "test:acceptance": "cargo test --manifest-path ../server/Cargo.toml --locked && pnpm test:e2e",
     "contract:generate": "node scripts/generate-product-contract.mjs",
     "contract:check": "node scripts/generate-product-contract.mjs --check"
   },

@@ -37,11 +37,16 @@ test("刷新时可选资源树接口不可用也不会阻塞工作区", async ({
   browserErrors.set(page, unexpectedErrors);
 });
 
-test("资产引用分类在相邻面板预览且始终保持在视口内", async ({ page }) => {
+test("资产引用分类与候选媒体预览保持在视口内", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto("/?fixture=ready");
 
   const composer = page.getByRole("textbox", { name: "输入消息" });
+  await composer.click();
+  await composer.type("@");
+  await expect(composer).toHaveText("@");
+  await composer.type("x");
+  await expect(composer).toHaveText("@x");
   await composer.fill("@");
 
   const main = page.locator(".asset-mention-popover");
@@ -53,11 +58,24 @@ test("资产引用分类在相邻面板预览且始终保持在视口内", async
   await expect(preview.getByRole("option")).toHaveCount(7);
   await expect(preview.locator(".asset-mention-copy small")).toHaveCount(0);
   await preview.getByRole("option").first().hover();
-  await page.waitForTimeout(200);
+  const imageName = await preview.getByRole("option").first().locator("strong").innerText();
+  const imagePanel = page.getByRole("tooltip", { name: `${imageName}大预览` });
+  await expect(imagePanel.locator("img")).toBeVisible();
+  expect(await imagePanel.evaluate((element) => Number.parseInt(getComputedStyle(element).zIndex, 10))).toBeGreaterThan(1000);
+  const imagePanelBox = await imagePanel.boundingBox();
+  expect(imagePanelBox).not.toBeNull();
+  expect(imagePanelBox!.x).toBeGreaterThanOrEqual(0);
+  expect(imagePanelBox!.y).toBeGreaterThanOrEqual(0);
+  expect(imagePanelBox!.x + imagePanelBox!.width).toBeLessThanOrEqual(1280);
+  expect(imagePanelBox!.y + imagePanelBox!.height).toBeLessThanOrEqual(720);
   await expect(preview).toBeVisible();
 
   await page.getByRole("button", { name: /视频 \d+/ }).hover();
   await expect(preview.getByRole("option")).toHaveCount(2);
+  const videoOption = preview.getByRole("option").first();
+  const videoName = await videoOption.locator("strong").innerText();
+  await videoOption.hover();
+  await expect(page.getByRole("tooltip", { name: `${videoName}大预览` }).locator("video")).toBeVisible();
   await page.getByRole("button", { name: /图片 \d+/ }).hover();
   await expect(preview.getByRole("option")).toHaveCount(7);
 
@@ -82,9 +100,18 @@ test("资产引用分类在相邻面板预览且始终保持在视口内", async
 
   const selectedName = await preview.getByRole("option").first().locator("strong").innerText();
   await preview.getByRole("option").first().click();
-  const referenceChip = page.locator(".shared-composer-source.is-reference").first();
-  await expect(referenceChip.locator("strong")).toHaveText(selectedName);
-  await expect(referenceChip.locator("small")).toHaveCount(0);
+  const referenceToken = composer.locator(".inline-reference-token").first();
+  await expect(referenceToken.locator(".inline-reference-token__label")).toHaveText(selectedName);
+  await expect(composer).not.toContainText(`@${selectedName}`);
+  await expect(page.locator(".conversation .shared-composer-source.is-reference")).toHaveCount(1);
+  await expect(page.locator(".conversation .shared-composer-source.is-reference img")).toBeVisible();
+  await expect(main).toBeHidden();
+  await composer.press("End");
+  await composer.press("Backspace");
+  await expect(referenceToken).toBeVisible();
+  await composer.press("Backspace");
+  await expect(composer.locator(".inline-reference-token")).toHaveCount(0);
+  await expect(page.locator(".conversation .shared-composer-source.is-reference")).toHaveCount(0);
 
   await composer.fill("@当前片段的主环境视图");
   await expect(main.getByText("没有匹配的资产")).toBeVisible();
@@ -97,7 +124,9 @@ test("已引用的图片和视频悬浮时在上方显示媒体预览", async ({
   const composer = page.getByRole("textbox", { name: "输入消息" });
   const sidecar = page.locator(".asset-mention-sidecar");
   const selectFirstReference = async (categoryName: RegExp) => {
-    await composer.fill(`${await composer.inputValue()}@`);
+    await composer.focus();
+    await composer.press("End");
+    await composer.type("@");
     await page.getByRole("button", { name: categoryName }).hover();
     const option = sidecar.getByRole("option").first();
     const name = await option.locator("strong").innerText();
@@ -107,11 +136,11 @@ test("已引用的图片和视频悬浮时在上方显示媒体预览", async ({
 
   const imageName = await selectFirstReference(/图片 \d+/);
   const videoName = await selectFirstReference(/视频 \d+/);
-  const chips = page.locator(".shared-composer-source.is-reference");
+  const chips = composer.locator(".inline-reference-token");
   const imageChip = chips.filter({ hasText: imageName });
   const videoChip = chips.filter({ hasText: videoName });
 
-  const videoThumbnail = videoChip.locator("img.shared-composer-source__preview");
+  const videoThumbnail = videoChip.locator("img.inline-reference-token__preview");
   await expect(videoThumbnail).toBeVisible();
   const sidebarThumbnail = page.locator(".resource-tree__object")
     .filter({ hasText: videoName })
@@ -140,6 +169,126 @@ test("已引用的图片和视频悬浮时在上方显示媒体预览", async ({
   expect(panelBox!.x + panelBox!.width).toBeLessThanOrEqual(1280);
 });
 
+test("媒体生成提示词在正文位置渲染素材引用", async ({ page }) => {
+  await page.goto("/?fixture=ready");
+  await page.getByRole("button", { name: /林舟 · 面部三视图，/ }).click();
+
+  const form = page.getByRole("form", { name: "图片生成提示词编辑器" });
+  const prompt = form.getByRole("textbox", { name: "生成提示词" });
+  await prompt.fill("@");
+  await page.getByRole("button", { name: /图片 \d+/ }).hover();
+  const option = page.locator(".asset-mention-sidecar").getByRole("option").first();
+  const selectedName = await option.locator("strong").innerText();
+  await option.click();
+
+  const token = prompt.locator(".inline-reference-token");
+  await expect(token.locator(".inline-reference-token__label")).toHaveText(selectedName);
+  await expect(prompt).not.toContainText(`@${selectedName}`);
+  await expect(form.locator(".shared-composer-source.is-reference")).toHaveCount(1);
+  await expect(form.locator(".shared-composer-source.is-reference img")).toBeVisible();
+  await expect(form.getByRole("button", { name: "添加附件" })).toBeVisible();
+  await expect(form.getByRole("button", { name: "添加资产或附件" })).toHaveCount(0);
+
+  const chooser = page.waitForEvent("filechooser");
+  await form.getByRole("button", { name: "添加附件" }).click();
+  await (await chooser).setFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("reference notes") });
+  await expect(form.locator(".shared-composer-source.is-attachment")).toHaveCount(1);
+});
+
+test("视频全能参考跟随提示词引用，无需重复选择图片", async ({ page }) => {
+  await page.setViewportSize({ width: 950, height: 800 });
+  await page.goto("/?fixture=ready");
+  await page.getByRole("button", { name: /生成版本 03，/ }).click();
+
+  const form = page.getByRole("form", { name: "视频生成提示词编辑器" });
+  const prompt = form.getByRole("textbox", { name: "生成提示词" });
+  await expect(form.locator(".shared-composer-source.is-selected")).toHaveCount(0);
+  await form.getByRole("button", { name: "画面参考方式" }).click();
+  const menu = form.getByRole("dialog", { name: "画面参考方式" });
+  const triggerBounds = await form.getByRole("button", { name: "画面参考方式" }).boundingBox();
+  const menuBounds = await menu.boundingBox();
+  expect(triggerBounds).not.toBeNull();
+  expect(menuBounds).not.toBeNull();
+  expect(Math.abs(menuBounds!.x - triggerBounds!.x)).toBeLessThan(2);
+  expect(triggerBounds!.y - (menuBounds!.y + menuBounds!.height)).toBeGreaterThanOrEqual(8);
+  const compactWidth = await menu.evaluate((element) => element.getBoundingClientRect().width);
+  expect(compactWidth).toBeLessThan(240);
+  await expect(form.getByRole("radio", { name: "纯文本" })).toHaveCount(0);
+  await expect(form.getByRole("radio", { name: "全能参考" })).toBeDisabled();
+  await form.getByRole("radio", { name: "首尾帧" }).check();
+  await expect(menu.getByRole("combobox", { name: "首帧" })).toBeVisible();
+  expect(await menu.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(compactWidth);
+  await page.keyboard.press("Escape");
+  await form.getByRole("button", { name: /移除参考图片/ }).click();
+  await expect(form.getByRole("button", { name: "画面参考方式" })).toContainText("画面参考");
+
+  await prompt.fill("@");
+  await page.getByRole("button", { name: /图片 \d+/ }).hover();
+  const option = page.locator(".asset-mention-sidecar").getByRole("option").first();
+  const selectedName = await option.locator("strong").innerText();
+  await option.click();
+  await expect(form.locator(".shared-composer-source.is-reference img")).toHaveCount(1);
+  await expect(form.getByRole("button", { name: "画面参考方式" })).toContainText("全能参考");
+
+  await form.getByRole("button", { name: "画面参考方式" }).click();
+  await expect(form.getByRole("radio", { name: "全能参考" })).toBeChecked();
+  await expect(form.getByRole("checkbox")).toHaveCount(0);
+  await expect(form.getByRole("list", { name: "参考图片顺序" })).toHaveCount(0);
+  await expect(form.getByText(/参考图片（最多/)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  await form.getByRole("button", { name: `移除资产引用 ${selectedName}` }).click();
+  await expect(form.getByRole("button", { name: "画面参考方式" })).toContainText("画面参考");
+  await form.getByRole("button", { name: "画面参考方式" }).click();
+  await expect(form.getByRole("radio", { name: "全能参考" })).toBeDisabled();
+  await page.keyboard.press("Escape");
+
+  for (const width of [500, 360]) {
+    await page.setViewportSize({ width, height: 800 });
+    await form.getByRole("button", { name: "画面参考方式" }).click();
+    const trigger = await form.getByRole("button", { name: "画面参考方式" }).boundingBox();
+    const popover = await menu.boundingBox();
+    expect(trigger).not.toBeNull();
+    expect(popover).not.toBeNull();
+    expect(trigger!.y - (popover!.y + popover!.height)).toBeGreaterThanOrEqual(8);
+    expect(popover!.x).toBeGreaterThanOrEqual(8);
+    expect(popover!.x + popover!.width).toBeLessThanOrEqual(width - 8);
+    await form.getByRole("radio", { name: "首尾帧" }).check();
+    const framePopover = await menu.boundingBox();
+    expect(framePopover).not.toBeNull();
+    expect(framePopover!.x).toBeGreaterThanOrEqual(8);
+    expect(framePopover!.x + framePopover!.width).toBeLessThanOrEqual(width - 8);
+    await page.keyboard.press("Escape");
+    await form.getByRole("button", { name: /移除参考图片/ }).click();
+  }
+});
+
+test("视频输入框可从缩略图移除行内素材引用和生成参考", async ({ page }) => {
+  await page.goto("/?fixture=ready");
+  await page.getByRole("button", { name: /生成版本 03，/ }).click();
+
+  const form = page.getByRole("form", { name: "视频生成提示词编辑器" });
+  const prompt = form.getByRole("textbox", { name: "生成提示词" });
+  await prompt.fill("@");
+  await page.getByRole("button", { name: /图片 \d+/ }).hover();
+  const option = page.locator(".asset-mention-sidecar").getByRole("option").first();
+  const selectedName = await option.locator("strong").innerText();
+  await option.click();
+
+  const source = form.locator(".shared-composer-source.is-reference");
+  await expect(source).toHaveCount(1);
+  await expect(prompt.locator(".inline-reference-token")).toHaveCount(1);
+  const removeReference = form.getByRole("button", { name: `移除资产引用 ${selectedName}` });
+  await expect(removeReference).toBeVisible();
+  await expect(removeReference).toHaveCSS("opacity", "1");
+  await removeReference.click();
+
+  await expect(source).toHaveCount(0);
+  await expect(prompt.locator(".inline-reference-token")).toHaveCount(0);
+  await expect(form.locator(".shared-composer-source.is-selected")).toHaveCount(0);
+  await expect(form.getByRole("button", { name: "画面参考方式" })).toContainText("画面参考");
+});
+
 test("图片视频与 Agent 输入框使用同规格单行工具栏", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 760 });
   await page.goto("/?fixture=ready");
@@ -164,7 +313,7 @@ test("图片视频与 Agent 输入框使用同规格单行工具栏", async ({ p
       return { width: rect.width, height: rect.height };
     });
     const labelSizes = Array.from(toolbar.querySelectorAll<HTMLElement>(
-      ".composer-model-trigger, .composer-runtime-model, summary",
+      ".composer-runtime-model, summary",
     )).map((label) => getComputedStyle(label).fontSize);
     const action = toolbar.querySelector<HTMLElement>(".composer-toolbar__action")?.getBoundingClientRect();
     return {
@@ -273,7 +422,7 @@ test("工作区以递归资源树组织内容，并由选中对象驱动顶部�
 
   const canvasHeader = page.locator(".canvas-header");
   await expect(canvasHeader.locator(".canvas-title")).toHaveText("片段脚本");
-  await expect(page.locator(".storyboard-current-index")).toHaveText("片段 12");
+  await expect(page.locator(".storyboard-current-label")).toHaveText("片段流");
   await expect(page.locator(".storyboard-header-pending")).toHaveCount(0);
   await expect(page.getByRole("tree", { name: "片段资源树" })).toBeVisible();
   await expect(page.getByRole("button", { name: "角色", exact: true })).toBeVisible();
@@ -330,13 +479,75 @@ test("资源树只为等待用户处理的内容显示黄色状态点", async ({
 
   await page.goto("/?fixture=ready");
 
-  const pending = page.getByRole("button", { name: /林舟 · 面部三视图，.*等待用户处理/ });
+  const pending = page.getByRole("button", { name: /林舟 · 面部三视图，.*有待确认或取消的 AI 建议/ });
   const dot = pending.locator(".resource-tree__pending-dot");
   await expect(dot).toBeVisible();
-  await expect(dot).toHaveAttribute("title", "等待用户处理");
-  await expect(dot).toHaveCSS("background-color", "rgb(244, 189, 98)");
+  await expect(dot).toHaveAttribute("title", "有待确认或取消的 AI 建议");
+  const warningColors = await dot.evaluate((element) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--warning)";
+    document.body.append(probe);
+    const colors = {
+      dot: getComputedStyle(element).backgroundColor,
+      token: getComputedStyle(probe).color,
+    };
+    probe.remove();
+    return colors;
+  });
+  expect(warningColors.dot).toBe(warningColors.token);
   await expect(page.getByRole("button", { name: /林舟 · 防雨服装，/ }).locator(".resource-tree__pending-dot"))
     .toHaveCount(0);
+});
+
+test("Agent 直接写入的提示词显示待查看状态并在内容展示后自动清除", async ({ page }) => {
+  const projectId = "10000000-0000-4000-8000-000000000001";
+  const storyboardId = "20000000-0000-4000-8000-000000000012";
+  const collection = `/api/v1/projects/${projectId}/storyboards/${storyboardId}/workspace-nodes`;
+  const objectName = `AI 待查看视频-${Date.now()}`;
+  const createdResponse = await page.request.post(collection, {
+    headers: { "Idempotency-Key": `e2e-unseen-${Date.now()}` },
+    data: { parentId: null, kind: "object", name: objectName, objectType: "video" },
+  });
+  expect(createdResponse.ok()).toBe(true);
+  const created = await createdResponse.json() as { id: string };
+  const mediaResponse = await page.request.post(`${collection}/${created.id}/media`);
+  expect(mediaResponse.ok()).toBe(true);
+  const media = await mediaResponse.json() as { id: string; name: string; revision: number };
+  const agentPrompt = "镜头从村口全景缓慢推进，人物动作保持自然连贯";
+  const promptResponse = await page.request.patch(`/api/v1/projects/${projectId}/media/${media.id}`, {
+    data: { name: media.name, prompt: agentPrompt, expectedRevision: media.revision },
+  });
+  expect(promptResponse.ok()).toBe(true);
+
+  const unseenUpdateAt = "2026-09-27T09:00:00Z";
+  await page.route(`**${collection}`, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    const nodes = await response.json() as Array<Record<string, unknown>>;
+    await route.fulfill({
+      response,
+      json: nodes.map((node) => node.id === created.id ? { ...node, unseenUpdateAt } : node),
+    });
+  });
+  let viewedPayload: { seenThrough?: string } | null = null;
+  await page.route(`**${collection}/${created.id}/viewed`, async (route) => {
+    viewedPayload = route.request().postDataJSON() as { seenThrough?: string };
+    const response = await route.fetch();
+    const node = await response.json() as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...node, unseenUpdateAt: null } });
+  });
+
+  await page.goto("/?fixture=ready");
+  const pending = page.getByRole("button", { name: new RegExp(`${objectName}，AI 内容待查看`) });
+  const dot = pending.locator(".resource-tree__pending-dot");
+  await expect(dot).toBeVisible();
+  await expect(dot).toHaveClass(/resource-tree__pending-dot--unseen/);
+  await expect(dot).toHaveAttribute("title", "AI 内容待查看，打开后自动清除");
+
+  await pending.click();
+  await expect(page.getByRole("textbox", { name: "生成提示词" })).toHaveText(agentPrompt);
+  await expect.poll(() => viewedPayload?.seenThrough ?? null).toBe(unseenUpdateAt);
+  await expect(pending.locator(".resource-tree__pending-dot")).toHaveCount(0);
 });
 
 test("资源树可在任意文件夹下继续建文件夹并创建指定类型对象", async ({ page }) => {
@@ -386,7 +597,7 @@ test("媒体信息位于顶部右侧，提示词编辑器固定在预览区底�
   const promptDock = workspace.locator(".media-prompt-dock");
   await expect(metadata).toBeVisible();
   await expect(promptDock).toBeVisible();
-  await expect(promptDock.getByRole("textbox", { name: "生成提示词" })).toHaveValue("28岁东亚女性，冷静克制，正面与左右侧面角色设定图");
+  await expect(promptDock.getByRole("textbox", { name: "生成提示词" })).toHaveText("28岁东亚女性，冷静克制，正面与左右侧面角色设定图");
   const placement = await workspace.evaluate((element) => {
     const workspaceRect = element.getBoundingClientRect();
     const dockRect = element.querySelector(".media-prompt-dock")!.getBoundingClientRect();
@@ -454,7 +665,7 @@ test("提示词像对话输入框一样编辑并提交图片或视频生成", as
   const imagePrompt = page.getByRole("textbox", { name: "生成提示词" });
   await imagePrompt.fill("冷静克制的角色三视图");
   await imagePrompt.press("Shift+Enter");
-  await expect(imagePrompt).toHaveValue("冷静克制的角色三视图\n");
+  expect(await imagePrompt.textContent()).toBe("冷静克制的角色三视图\n");
   await imagePrompt.type("保持五官一致");
   await imagePrompt.press("Enter");
   await expect(page.locator(".media-prompt-composer").getByRole("status"))
@@ -465,8 +676,11 @@ test("提示词像对话输入框一样编辑并提交图片或视频生成", as
 
   await page.getByRole("button", { name: /生成版本 03，/ }).click();
   const videoPrompt = page.getByRole("textbox", { name: "生成提示词" });
-  await videoPrompt.fill("镜头缓慢前推，雨幕形成视差");
-  await page.getByRole("button", { name: "发送并生成视频" }).click();
+  await videoPrompt.fill("镜头缓慢前推");
+  await videoPrompt.press("Enter");
+  await videoPrompt.type("雨幕形成视差");
+  expect(await videoPrompt.textContent()).toBe("镜头缓慢前推\n雨幕形成视差");
+  await videoPrompt.press("Control+Enter");
   await expect(page.locator(".media-prompt-composer").getByRole("status"))
     .toHaveText("视频生成任务已提交");
 });
@@ -533,6 +747,16 @@ async function mockPendingScriptProposal(page: Page) {
 
 test("AI 脚本建议直接展示最新版，确认后更新正式脚本与版本", async ({ page }) => {
   await mockPendingScriptProposal(page);
+  const nextEdit = `${scriptProposalText}\n补充一处镜头说明。`;
+  await page.route("**/api/v1/projects/**/storyboards/20000000-0000-4000-8000-000000000012/script", (route) => {
+    if (route.request().method() !== "PATCH") return route.fallback();
+    expect(route.request().postDataJSON()).toMatchObject({ text: nextEdit, expectedRevision: 7 });
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ text: nextEdit, revision: 8, updatedAt: "2026-09-26T08:03:00.000Z" }),
+    });
+  });
   await page.route("**/api/v1/projects/**/proposals/proposal-script-review/apply", async (route) => {
     expect(route.request().postDataJSON()).toMatchObject({
       expectedProposalRevision: 1,
@@ -568,8 +792,14 @@ test("AI 脚本建议直接展示最新版，确认后更新正式脚本与版�
   await headerActions.getByRole("button", { name: "确认", exact: true }).click();
 
   await expect(editor).toHaveValue(scriptProposalText);
-  await expect(page.locator(".script-editor-feedback")).toContainText("版本 7");
+  await expect(page.locator(".script-editor-feedback")).toHaveText("已保存");
   await expect(headerActions.getByRole("button", { name: "保存" })).toBeDisabled();
+  await editor.fill(nextEdit);
+  const nextSaveResponse = page.waitForResponse((response) =>
+    response.request().method() === "PATCH" && response.url().includes("/script"),
+  );
+  await headerActions.getByRole("button", { name: "保存" }).click();
+  expect((await nextSaveResponse).status()).toBe(200);
 });
 
 test("取消 AI 脚本最新版后恢复上一版正式内容", async ({ page }) => {
@@ -630,7 +860,7 @@ test("AI 脚本建议可直接改写，放弃修改可返回建议，保存按�
   await expect(actions.getByRole("button", { name: "确认", exact: true })).toHaveCount(0);
   await actions.getByRole("button", { name: "保存" }).click();
   await expect(editor).toHaveValue(edited);
-  await expect(page.locator(".script-editor-feedback")).toContainText("版本 7");
+  await expect(page.locator(".script-editor-feedback")).toHaveText("已保存");
   await expect(actions.getByRole("button", { name: "确认", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "查看原建议" })).toBeVisible();
   await page.getByRole("button", { name: "查看原建议" }).click();
