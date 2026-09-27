@@ -1,0 +1,393 @@
+{
+  "thread": {
+    "id": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+    "title": "现在这个短剧制作Agent有哪些内置工具。",
+    "createdAt": "2026-09-27T12:37:23.408174400+00:00",
+    "updatedAt": "2026-09-27T12:42:48.195115200+00:00"
+  },
+  "projectId": "10000000-0000-4000-8000-000000000001",
+  "storyboardId": "1045b0ae-1075-4c1d-9e27-ee0359510dec",
+  "messages": [
+    {
+      "id": "840af5aa-d775-4b0d-a744-e96fba7dacc0",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "role": "user",
+      "parts": [
+        {
+          "type": "text",
+          "text": "现在这个短剧制作Agent有哪些内置工具。"
+        }
+      ],
+      "createdAt": "2026-09-27T12:42:43.496479800Z"
+    },
+    {
+      "id": "919d4b65-1588-475c-83b6-d31c7daebbbc",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "role": "assistant",
+      "parts": [
+        {
+          "type": "text",
+          "text": "当前这个短剧制作 Agent 内置的工具一共 7 个，按用途可以分为「查找」「读取」「写入」「生成提案」四类：\n\n## 一、查找与读取（只读，不改动任何东西）\n| 工具 | 作用 |\n|---|---|\n| `search_storyboard_assets` | 在**当前分镜**范围内按名称或内容搜索文本、绑定资产（assetBinding）、图片、视频；返回稳定 ID 和 revision，支持 `kind` 过滤和 `offset` 翻页 |\n| `read_storyboard_asset` | 用搜索拿到的 ID + 类型，读取某个资源的正文内容、提示词、状态和版本号 |\n\n## 二、写入提示词（不触发生成）\n| 工具 | 作用 |\n|---|---|\n| `save_workspace_object_prompt` | 把一段提示词直接写进已有**图片/视频对象**的提示词编辑器，不生成媒体。新版本成为当前唯一可见版本，旧版本保留给用户 Ctrl+Z 撤销 |\n| `create_workspace_object` | 在指定文件夹（分镜下的分组，如「人物」「场景」「道具」「视频」）里新建图片或视频对象，只保存提示词，同样不启动生成 |\n\n## 三、生成提案（需用户确认后才真正跑）\n| 工具 | 作用 |\n|---|---|\n| `propose_image_prompt_change` | 提交图片提示词 + 有序参考图（最多 14 张），生成前先交给用户确认 |\n| `propose_video_prompt_change` | 提交视频提示词 + 输入图（支持纯文本、首尾帧、参考图三种模式，参考图最多 9 张），同样先确认 |\n| `propose_text_patch` | 对选中的分镜剧本做**一处精确上下文替换**，保存为提案等用户确认 |\n\n## 几个边界，实际用的时候值得注意\n- **没有任何一个工具能直接出图出视频**，需要生成时一律走「提案 → 用户确认 → 生成」这条路。\n- 如果用户只是想要提示词文本，就用 `save_workspace_object_prompt`；只有明确要生成才用 `propose_*`，两者别混用。\n- 工具作用范围锁定在**当前分镜**（ID `1045b0ae…`，即「牧羊犬的日常-数羊」），不能跨项目或跨分镜操作。\n- 没有代码执行、文件系统或联网类工具，也不负责渲染/合成，能力集中在剧本文字、提示词和参考图编排上。\n\n需要我针对某个具体环节（比如给「牧羊犬」「三只捣乱羊」建对象、或改写分镜剧本）演示一下怎么调用吗？"
+        }
+      ],
+      "createdAt": "2026-09-27T12:42:48.174133600Z"
+    }
+  ],
+  "events": [
+    {
+      "id": "bb836a96-8cc7-43b4-9704-ff3238a3def7",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "turnId": "4cddeb32-3595-4cd1-9c62-adead80a0793",
+      "seq": 1,
+      "createdAt": "2026-09-27T12:42:43.860918300Z",
+      "payload": {
+        "type": "turn_started",
+        "user_message_id": "840af5aa-d775-4b0d-a744-e96fba7dacc0"
+      }
+    },
+    {
+      "id": "0eeb1450-c11e-4717-9983-0af3005952b0",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "turnId": "4cddeb32-3595-4cd1-9c62-adead80a0793",
+      "seq": 2,
+      "createdAt": "2026-09-27T12:42:43.874789Z",
+      "payload": {
+        "type": "model_request",
+        "request_id": "f949d31f-18b7-4c7b-9116-57e99a6393b9",
+        "round": 1
+      }
+    },
+    {
+      "id": "f1eb0625-dfcf-42e8-b689-04077a909c29",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "turnId": "4cddeb32-3595-4cd1-9c62-adead80a0793",
+      "seq": 3,
+      "createdAt": "2026-09-27T12:42:43.877510300Z",
+      "payload": {
+        "type": "provider_request_sent",
+        "request_id": "f949d31f-18b7-4c7b-9116-57e99a6393b9",
+        "round": 1,
+        "attempt": 1,
+        "adapter": "openai_chat_completions",
+        "method": "POST",
+        "endpoint": "https://api.deepseek.com/chat/completions",
+        "cache_trace": {
+          "schemaVersion": 1,
+          "prefixHash": "d06dc039415fa917",
+          "segments": [
+            {
+              "kind": "system_message",
+              "source": "messages[0]",
+              "contentHash": "f6a4b45fd77699eb",
+              "tokenEstimate": 85
+            },
+            {
+              "kind": "user_message",
+              "source": "messages[1]",
+              "contentHash": "0266b17a970c6455",
+              "tokenEstimate": 29
+            },
+            {
+              "kind": "user_message",
+              "source": "messages[2]",
+              "contentHash": "496c7cabe3dee7af",
+              "tokenEstimate": 5815
+            }
+          ],
+          "toolCatalogHash": "228671f4584cf0e5",
+          "promptCacheKeyHash": "7469025019504e2b",
+          "previousResponseIdPresent": false,
+          "configuration": [
+            {
+              "name": "parallel_tool_calls",
+              "valueHash": "5b5c98ef514dbfa5"
+            },
+            {
+              "name": "reasoning_effort",
+              "valueHash": "5861c2c3c853b5ed"
+            },
+            {
+              "name": "thinking",
+              "valueHash": "dbd4ded44d54735e"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ce2e2c18-790c-4730-aecb-e6238f06954d",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "turnId": "4cddeb32-3595-4cd1-9c62-adead80a0793",
+      "seq": 4,
+      "createdAt": "2026-09-27T12:42:44.082531800Z",
+      "payload": {
+        "type": "provider_response_headers_received",
+        "request_id": "f949d31f-18b7-4c7b-9116-57e99a6393b9",
+        "round": 1,
+        "attempt": 1,
+        "status": 200
+      }
+    },
+    {
+      "id": "019ad217-233f-4b66-9e56-7a845092f3b8",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "turnId": "4cddeb32-3595-4cd1-9c62-adead80a0793",
+      "seq": 5,
+      "createdAt": "2026-09-27T12:42:44.633441Z",
+      "payload": {
+        "type": "provider_first_token_received",
+        "request_id": "f949d31f-18b7-4c7b-9116-57e99a6393b9"
+      }
+    },
+    {
+      "id": "3bcd9d86-922c-4d11-a831-ed9562950ae2",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "turnId": "4cddeb32-3595-4cd1-9c62-adead80a0793",
+      "seq": 37,
+      "createdAt": "2026-09-27T12:42:48.174362400Z",
+      "payload": {
+        "type": "provider_stream_progress",
+        "request_id": "f949d31f-18b7-4c7b-9116-57e99a6393b9",
+        "round": 1,
+        "attempt": 1,
+        "output_events": 833,
+        "output_bytes": 3363,
+        "elapsed_ms": 4090
+      }
+    },
+    {
+      "id": "965a2cd8-6050-44c5-bd98-f0631c0c6913",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "turnId": "4cddeb32-3595-4cd1-9c62-adead80a0793",
+      "seq": 38,
+      "createdAt": "2026-09-27T12:42:48.177759900Z",
+      "payload": {
+        "type": "provider_response_commit_started",
+        "request_id": "f949d31f-18b7-4c7b-9116-57e99a6393b9",
+        "round": 1,
+        "attempt": 1,
+        "output_events": 833,
+        "output_bytes": 3363,
+        "elapsed_ms": 4090
+      }
+    },
+    {
+      "id": "62bcda32-36b3-4c95-8db7-36a7ca244796",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "turnId": "4cddeb32-3595-4cd1-9c62-adead80a0793",
+      "seq": 40,
+      "createdAt": "2026-09-27T12:42:48.183724Z",
+      "payload": {
+        "type": "provider_response_received",
+        "request_id": "f949d31f-18b7-4c7b-9116-57e99a6393b9",
+        "round": 1,
+        "attempt": 1,
+        "status": 200,
+        "response_id": null
+      }
+    },
+    {
+      "id": "52ae8f70-fbf4-4849-9eb8-b1cb8c52c666",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "turnId": "4cddeb32-3595-4cd1-9c62-adead80a0793",
+      "seq": 41,
+      "createdAt": "2026-09-27T12:42:48.186774700Z",
+      "payload": {
+        "type": "token_usage",
+        "request_id": "f949d31f-18b7-4c7b-9116-57e99a6393b9",
+        "round": 1,
+        "purpose": "agent_round",
+        "input_tokens": 7037,
+        "output_tokens": 834,
+        "total_tokens": 7871,
+        "cached_input_tokens": 1280,
+        "reasoning_tokens": 239,
+        "local_input_estimate": 6850,
+        "input_breakdown": {
+          "baseInstructions": 74,
+          "developerInstructions": 627,
+          "repositoryInstructions": 0,
+          "runtimeContext": 4901,
+          "skillInstructions": 0,
+          "summaries": 0,
+          "checkpoints": 0,
+          "conversation": 0,
+          "currentUser": 18,
+          "toolCalls": 0,
+          "toolResults": 0,
+          "directToolSchemas": 1230,
+          "deferredToolCatalog": 0,
+          "loadedToolSchemas": 0,
+          "toolSchemas": 1230,
+          "outputSchema": 0,
+          "turnAssistantState": 0,
+          "providerState": 0,
+          "other": 0,
+          "total": 6850,
+          "details": [
+            {
+              "id": "base_instructions",
+              "label": "Base instructions",
+              "tokens": 74,
+              "children": [
+                {
+                  "id": "videoflow.runtime",
+                  "label": "videoflow.runtime",
+                  "tokens": 74
+                }
+              ]
+            },
+            {
+              "id": "developer_instructions",
+              "label": "Developer instructions",
+              "tokens": 627,
+              "children": [
+                {
+                  "id": "execution_lineage",
+                  "label": "execution_lineage",
+                  "tokens": 627
+                }
+              ]
+            },
+            {
+              "id": "runtime_context",
+              "label": "Runtime context",
+              "tokens": 4901,
+              "children": [
+                {
+                  "id": "videoflow.workspace",
+                  "label": "videoflow.workspace",
+                  "tokens": 4901
+                }
+              ]
+            },
+            {
+              "id": "conversation",
+              "label": "Conversation history",
+              "tokens": 0
+            },
+            {
+              "id": "current_user",
+              "label": "Current user input",
+              "tokens": 18,
+              "children": [
+                {
+                  "id": "message_text",
+                  "label": "Message text",
+                  "tokens": 18
+                }
+              ]
+            },
+            {
+              "id": "tool_calls",
+              "label": "Tool calls",
+              "tokens": 0
+            },
+            {
+              "id": "tool_results",
+              "label": "Tool results",
+              "tokens": 0
+            },
+            {
+              "id": "tool_schemas",
+              "label": "Tool surface",
+              "tokens": 1230,
+              "children": [
+                {
+                  "id": "direct_tool_schemas",
+                  "label": "Direct tool schemas",
+                  "tokens": 1230,
+                  "children": [
+                    {
+                      "id": "create_workspace_object",
+                      "label": "create_workspace_object",
+                      "tokens": 160
+                    },
+                    {
+                      "id": "propose_image_prompt_change",
+                      "label": "propose_image_prompt_change",
+                      "tokens": 255
+                    },
+                    {
+                      "id": "propose_text_patch",
+                      "label": "propose_text_patch",
+                      "tokens": 149
+                    },
+                    {
+                      "id": "propose_video_prompt_change",
+                      "label": "propose_video_prompt_change",
+                      "tokens": 265
+                    },
+                    {
+                      "id": "read_storyboard_asset",
+                      "label": "read_storyboard_asset",
+                      "tokens": 93
+                    },
+                    {
+                      "id": "save_workspace_object_prompt",
+                      "label": "save_workspace_object_prompt",
+                      "tokens": 185
+                    },
+                    {
+                      "id": "search_storyboard_assets",
+                      "label": "search_storyboard_assets",
+                      "tokens": 123
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "output_schema",
+              "label": "Output schema",
+              "tokens": 0
+            },
+            {
+              "id": "turn_assistant_state",
+              "label": "Current-turn assistant state",
+              "tokens": 0
+            },
+            {
+              "id": "provider_state",
+              "label": "Opaque provider continuation state",
+              "tokens": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d51664d0-1aca-4483-a138-149f76cd78df",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "turnId": "4cddeb32-3595-4cd1-9c62-adead80a0793",
+      "seq": 42,
+      "createdAt": "2026-09-27T12:42:48.189719100Z",
+      "payload": {
+        "type": "assistant_message",
+        "message": {
+          "id": "919d4b65-1588-475c-83b6-d31c7daebbbc",
+          "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "当前这个短剧制作 Agent 内置的工具一共 7 个，按用途可以分为「查找」「读取」「写入」「生成提案」四类：\n\n## 一、查找与读取（只读，不改动任何东西）\n| 工具 | 作用 |\n|---|---|\n| `search_storyboard_assets` | 在**当前分镜**范围内按名称或内容搜索文本、绑定资产（assetBinding）、图片、视频；返回稳定 ID 和 revision，支持 `kind` 过滤和 `offset` 翻页 |\n| `read_storyboard_asset` | 用搜索拿到的 ID + 类型，读取某个资源的正文内容、提示词、状态和版本号 |\n\n## 二、写入提示词（不触发生成）\n| 工具 | 作用 |\n|---|---|\n| `save_workspace_object_prompt` | 把一段提示词直接写进已有**图片/视频对象**的提示词编辑器，不生成媒体。新版本成为当前唯一可见版本，旧版本保留给用户 Ctrl+Z 撤销 |\n| `create_workspace_object` | 在指定文件夹（分镜下的分组，如「人物」「场景」「道具」「视频」）里新建图片或视频对象，只保存提示词，同样不启动生成 |\n\n## 三、生成提案（需用户确认后才真正跑）\n| 工具 | 作用 |\n|---|---|\n| `propose_image_prompt_change` | 提交图片提示词 + 有序参考图（最多 14 张），生成前先交给用户确认 |\n| `propose_video_prompt_change` | 提交视频提示词 + 输入图（支持纯文本、首尾帧、参考图三种模式，参考图最多 9 张），同样先确认 |\n| `propose_text_patch` | 对选中的分镜剧本做**一处精确上下文替换**，保存为提案等用户确认 |\n\n## 几个边界，实际用的时候值得注意\n- **没有任何一个工具能直接出图出视频**，需要生成时一律走「提案 → 用户确认 → 生成」这条路。\n- 如果用户只是想要提示词文本，就用 `save_workspace_object_prompt`；只有明确要生成才用 `propose_*`，两者别混用。\n- 工具作用范围锁定在**当前分镜**（ID `1045b0ae…`，即「牧羊犬的日常-数羊」），不能跨项目或跨分镜操作。\n- 没有代码执行、文件系统或联网类工具，也不负责渲染/合成，能力集中在剧本文字、提示词和参考图编排上。\n\n需要我针对某个具体环节（比如给「牧羊犬」「三只捣乱羊」建对象、或改写分镜剧本）演示一下怎么调用吗？"
+            }
+          ],
+          "createdAt": "2026-09-27T12:42:48.174133600Z"
+        }
+      }
+    },
+    {
+      "id": "3482ae99-0f37-4b12-b0d4-d25d841eee90",
+      "threadId": "4a4079ee-985c-4b07-86ca-d8e2cd353241",
+      "turnId": "4cddeb32-3595-4cd1-9c62-adead80a0793",
+      "seq": 43,
+      "createdAt": "2026-09-27T12:42:48.194888800Z",
+      "payload": {
+        "type": "turn_finished",
+        "summary": "Provider agent turn completed."
+      }
+    }
+  ]
+}
