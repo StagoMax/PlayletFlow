@@ -1,5 +1,5 @@
 use crate::{
-    cloud_generation, conversation_events::conversation_payload,
+    cloud_generation, cloud_workspace, conversation_events::conversation_payload,
     conversation_references::message_model_text, history, rate_limit::RateLimiter, runtime,
 };
 use axum::body::{Body, Bytes};
@@ -26,11 +26,13 @@ pub struct CloudState {
     pub tools: ToolRegistry,
     pub workspace: PathBuf,
     pub rate_limit: Arc<RateLimiter>,
+    pub workspace_store: Option<cloud_workspace::CloudWorkspaceStore>,
 }
 
 pub fn router(state: CloudState) -> Router {
     let generation = cloud_generation::router(state.rate_limit.clone());
-    Router::new()
+    let workspace_router = state.workspace_store.clone().map(cloud_workspace::router);
+    let mut router = Router::new()
         .route(
             "/health",
             get(|State(state): State<CloudState>| async move {
@@ -39,19 +41,26 @@ pub fn router(state: CloudState) -> Router {
                     "runtime": "opentopia-agent-core",
                     "mode": if state.fixture { "fixture" } else { "live" },
                     "model": if state.fixture { Some("mock-fixture".to_owned()) } else { runtime::configured_model_id().ok() },
+                    "workspaceTools": if state.workspace_store.is_some() { 7 } else { 0 },
                 }))
             }),
         )
         .route("/api/turn", post(turn))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state)
-        .merge(generation)
+        .merge(generation);
+    if let Some(workspace_router) = workspace_router {
+        router = router.merge(workspace_router);
+    }
+    router
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TurnRequest {
     thread_id: Uuid,
+    project_id: Option<String>,
+    storyboard_id: Option<String>,
     message: Message,
     messages: Vec<Message>,
     events: Vec<AgentEvent>,
@@ -71,24 +80,29 @@ async fn turn(
     Json(request): Json<TurnRequest>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     accept(&state, &headers, &request)?;
+    let token = if state.workspace_store.is_some() {
+        Some(cloud_workspace::workspace_token(&headers)?)
+    } else {
+        None
+    };
     let wants_stream = headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.contains("text/event-stream"));
     if wants_stream {
-        return Ok(stream_response(state, request));
+        return Ok(stream_response(state, request, token));
     }
-    execute_turn(state, request)
+    execute_turn(state, request, token)
         .await
         .map(|response| Json(response).into_response())
 }
 
-fn stream_response(state: CloudState, request: TurnRequest) -> Response {
+fn stream_response(state: CloudState, request: TurnRequest, token: Option<Uuid>) -> Response {
     let stream = async_stream::stream! {
         yield Ok::<Bytes, Infallible>(Bytes::from_static(b"event: started\ndata: {}\n\n"));
         let mut heartbeat = tokio::time::interval(Duration::from_secs(3));
         heartbeat.tick().await;
-        let preparation = prepare_turn(state, request);
+        let preparation = prepare_turn(state, request, token);
         tokio::pin!(preparation);
         let prepared = loop {
             tokio::select! {
@@ -118,6 +132,7 @@ fn stream_response(state: CloudState, request: TurnRequest) -> Response {
             history,
             mut next_seq,
             started,
+            workspace_context,
         } = prepared;
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let work = runtime::run_once(runtime::RuntimeTurnRequest {
@@ -130,7 +145,7 @@ fn stream_response(state: CloudState, request: TurnRequest) -> Response {
             content,
             conversation: history,
             sender: Some(sender),
-            workspace_context: None,
+            workspace_context,
             cancellation: None,
         });
         tokio::pin!(work);
@@ -233,8 +248,9 @@ fn accept(
 async fn execute_turn(
     state: CloudState,
     request: TurnRequest,
+    token: Option<Uuid>,
 ) -> Result<TurnResponse, (StatusCode, Json<serde_json::Value>)> {
-    let prepared = prepare_turn(state, request).await?;
+    let prepared = prepare_turn(state, request, token).await?;
     let PreparedTurn {
         provider,
         tools,
@@ -246,6 +262,7 @@ async fn execute_turn(
         history,
         next_seq,
         started,
+        workspace_context,
     } = prepared;
     let result = runtime::run_once(runtime::RuntimeTurnRequest {
         provider,
@@ -257,7 +274,7 @@ async fn execute_turn(
         content,
         conversation: history,
         sender: None,
-        workspace_context: None,
+        workspace_context,
         cancellation: None,
     })
     .await
@@ -296,11 +313,13 @@ struct PreparedTurn {
     history: Vec<ModelConversationMessage>,
     next_seq: i64,
     started: std::time::Instant,
+    workspace_context: Option<String>,
 }
 
 async fn prepare_turn(
     state: CloudState,
     request: TurnRequest,
+    token: Option<Uuid>,
 ) -> Result<PreparedTurn, (StatusCode, Json<serde_json::Value>)> {
     let started = std::time::Instant::now();
     eprintln!("cloud turn accepted");
@@ -323,6 +342,40 @@ async fn prepare_turn(
         "cloud provider ready after {}ms",
         started.elapsed().as_millis()
     );
+    let (tools, workspace_context) = if let Some(store) = state.workspace_store.as_ref() {
+        let token =
+            token.ok_or_else(|| error(StatusCode::UNAUTHORIZED, "missing workspace key"))?;
+        let project_id = request
+            .project_id
+            .as_deref()
+            .ok_or_else(|| error(StatusCode::BAD_REQUEST, "projectId is required"))?;
+        let storyboard_id = request
+            .storyboard_id
+            .as_deref()
+            .ok_or_else(|| error(StatusCode::BAD_REQUEST, "storyboardId is required"))?;
+        let doc = store
+            .get(token)
+            .await
+            .map_err(|cause| {
+                eprintln!("cloud workspace read failed: {cause:#}");
+                error(StatusCode::BAD_GATEWAY, "cloud workspace is unavailable")
+            })?
+            .ok_or_else(|| error(StatusCode::NOT_FOUND, "workspace not found"))?;
+        let context =
+            cloud_workspace::scope_context(&doc.document.snapshot, project_id, storyboard_id)
+                .map_err(|_| error(StatusCode::NOT_FOUND, "storyboard not found"))?;
+        (
+            cloud_workspace::registry_for(
+                store.clone(),
+                token,
+                project_id.to_owned(),
+                storyboard_id.to_owned(),
+            ),
+            Some(context),
+        )
+    } else {
+        (state.tools, None)
+    };
     let user = request.message;
     let content = message_model_text(&user.parts);
     let turn_id = Uuid::new_v4();
@@ -330,7 +383,7 @@ async fn prepare_turn(
     let next_seq = request.events.last().map_or(0, |event| event.seq) + 1;
     Ok(PreparedTurn {
         provider,
-        tools: state.tools,
+        tools,
         workspace: state.workspace,
         thread_id: request.thread_id,
         turn_id,
@@ -339,6 +392,7 @@ async fn prepare_turn(
         history,
         next_seq,
         started,
+        workspace_context,
     })
 }
 
@@ -384,6 +438,7 @@ mod tests {
             tools: runtime::default_registry(),
             workspace: std::env::temp_dir(),
             rate_limit: Arc::new(RateLimiter::default()),
+            workspace_store: None,
         };
         let thread_id = Uuid::new_v4();
         let message = Message::text(thread_id, MessageRole::User, "stream me");

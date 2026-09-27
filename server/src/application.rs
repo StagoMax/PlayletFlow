@@ -69,6 +69,11 @@ pub async fn run(args: Vec<String>) -> Result<()> {
             tools: runtime::default_registry(),
             workspace: std::env::current_dir()?,
             rate_limit: Arc::new(rate_limit::RateLimiter::default()),
+            workspace_store: if fixture {
+                crate::cloud_workspace::CloudWorkspaceStore::from_env().ok()
+            } else {
+                Some(crate::cloud_workspace::CloudWorkspaceStore::from_env()?)
+            },
         };
         let port = std::env::var("PORT")
             .ok()

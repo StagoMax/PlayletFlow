@@ -193,6 +193,48 @@ impl TosObjectStorage {
     fn output_key(job_id: GenerationJobId, mime_type: &str) -> String {
         format!("outputs/{job_id}/result.{}", extension(mime_type))
     }
+
+    /// Read a small mutable document together with its storage revision.
+    pub async fn get_versioned(&self, key: &str) -> ProductResult<Option<(Vec<u8>, String)>> {
+        validate_key(key)?;
+        let result = self
+            .client
+            .get_object(&GetObjectInput::new(self.bucket.as_ref(), key))
+            .await;
+        let mut output = match result {
+            Ok(output) => output,
+            Err(error) if is_status(&error, 404) => return Ok(None),
+            Err(error) => return Err(map_tos(error, "read versioned TOS object")),
+        };
+        let etag = output.etag().to_owned();
+        let bytes = output
+            .read_all()
+            .await
+            .map_err(|error| map_tos(error, "read versioned TOS body"))?;
+        Ok(Some((bytes, etag)))
+    }
+
+    /// Conditional overwrite prevents concurrent browser and Agent writes from losing data.
+    pub async fn put_versioned(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+        expected_etag: Option<&str>,
+    ) -> ProductResult<Option<String>> {
+        validate_key(key)?;
+        let mut input =
+            PutObjectFromBufferInput::new_with_content(self.bucket.as_ref(), key, bytes);
+        input.set_content_type("application/json");
+        match expected_etag {
+            Some(etag) => input.set_if_match(etag),
+            None => input.set_if_none_match("*"),
+        }
+        match self.client.put_object_from_buffer(&input).await {
+            Ok(output) => Ok(Some(output.etag().to_owned())),
+            Err(error) if is_status(&error, 412) || is_conflict(&error) => Ok(None),
+            Err(error) => Err(map_tos(error, "write versioned TOS object")),
+        }
+    }
 }
 
 #[async_trait]

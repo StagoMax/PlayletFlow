@@ -1,6 +1,6 @@
 mod api;
-mod record;
-mod service;
+pub(crate) mod record;
+pub(crate) mod service;
 
 pub use api::router;
 

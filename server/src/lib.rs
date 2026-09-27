@@ -2,6 +2,7 @@ mod api;
 pub mod application;
 mod cloud;
 mod cloud_generation;
+mod cloud_workspace;
 mod conversation;
 mod conversation_events;
 mod conversation_references;
