@@ -316,6 +316,49 @@
         }
       }
     },
+    "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/order": {
+      "parameters": [
+        { "$ref": "#/components/parameters/ProjectId" },
+        { "$ref": "#/components/parameters/StoryboardId" },
+        { "$ref": "#/components/parameters/WorkspaceNodeId" }
+      ],
+      "patch": {
+        "operationId": "reorderWorkspaceNode",
+        "tags": ["Workspace"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ReorderWorkspaceNodeRequest" } }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/WorkspaceNode" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/viewed": {
+      "parameters": [
+        { "$ref": "#/components/parameters/ProjectId" },
+        { "$ref": "#/components/parameters/StoryboardId" },
+        { "$ref": "#/components/parameters/WorkspaceNodeId" }
+      ],
+      "put": {
+        "operationId": "markWorkspaceNodeViewed",
+        "tags": ["Workspace"],
+        "description": "Marks AI-authored workspace content as viewed through the supplied update timestamp. A newer update remains unseen.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/MarkWorkspaceNodeViewedRequest" } }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/WorkspaceNode" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/media": {
       "parameters": [
         { "$ref": "#/components/parameters/ProjectId" },
@@ -348,6 +391,35 @@
             "image/webp": { "schema": { "type": "string", "format": "binary" } },
             "video/mp4": { "schema": { "type": "string", "format": "binary" } },
             "video/quicktime": { "schema": { "type": "string", "format": "binary" } }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Media" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/projects/{projectId}/storyboards/{storyboardId}/generation-inputs/{inputId}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/ProjectId" },
+        { "$ref": "#/components/parameters/StoryboardId" },
+        { "name": "inputId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+      ],
+      "put": {
+        "operationId": "uploadGenerationInput",
+        "tags": ["Generation", "Media"],
+        "description": "Uploads a reference image to the local runtime. Repeating the same input ID and bytes returns the existing image. Maximum body size: 8 MB.",
+        "parameters": [
+          { "name": "name", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "width", "in": "query", "required": true, "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "height", "in": "query", "required": true, "schema": { "type": "integer", "minimum": 1 } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/jpeg": { "schema": { "type": "string", "format": "binary" } },
+            "image/png": { "schema": { "type": "string", "format": "binary" } },
+            "image/webp": { "schema": { "type": "string", "format": "binary" } }
           }
         },
         "responses": {
@@ -757,6 +829,30 @@
         }
       }
     },
+    "/projects/{projectId}/media/{mediaId}/generation-jobs/latest": {
+      "parameters": [
+        { "$ref": "#/components/parameters/ProjectId" },
+        { "$ref": "#/components/parameters/MediaId" }
+      ],
+      "get": {
+        "operationId": "getLatestMediaGenerationJob",
+        "tags": ["Generation"],
+        "responses": {
+          "200": {
+            "description": "Latest generation job for this media, or null when none exists.",
+            "content": {
+              "application/json": {
+                "schema": { "oneOf": [
+                  { "$ref": "#/components/schemas/GenerationJob" },
+                  { "type": "null" }
+                ] }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/projects/{projectId}/generation-jobs/{jobId}/retry": {
       "parameters": [
         { "$ref": "#/components/parameters/ProjectId" },
@@ -829,6 +925,21 @@
               }
             }
           },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/projects/{projectId}/storyboards/{storyboardId}/ai-threads/{threadId}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/ProjectId" },
+        { "$ref": "#/components/parameters/StoryboardId" },
+        { "name": "threadId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+      ],
+      "delete": {
+        "operationId": "deleteWorkspaceAiThread",
+        "tags": ["Workspace AI"],
+        "responses": {
+          "204": { "description": "The scoped conversation and binding were deleted." },
           "default": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -1291,7 +1402,7 @@
       },
       "WorkspaceNode": {
         "type": "object",
-        "required": ["id", "projectId", "storyboardId", "parentId", "kind", "name", "objectType", "targetType", "targetId", "position", "revision", "createdAt", "updatedAt"],
+        "required": ["id", "projectId", "storyboardId", "parentId", "kind", "name", "objectType", "targetType", "targetId", "position", "revision", "createdAt", "updatedAt", "unseenUpdateAt"],
         "properties": {
           "id": { "type": "string" },
           "projectId": { "type": "string", "format": "uuid" },
@@ -1305,7 +1416,8 @@
           "position": { "type": "string" },
           "revision": { "type": "integer", "minimum": 1 },
           "createdAt": { "type": "string", "format": "date-time" },
-          "updatedAt": { "type": "string", "format": "date-time" }
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "unseenUpdateAt": { "type": ["string", "null"], "format": "date-time", "description": "Latest AI-authored update that has not yet been displayed to the user." }
         },
         "additionalProperties": false
       },
@@ -1326,6 +1438,24 @@
         "properties": {
           "parentId": { "type": ["string", "null"] },
           "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "expectedRevision": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": false
+      },
+      "MarkWorkspaceNodeViewedRequest": {
+        "type": "object",
+        "required": ["seenThrough"],
+        "properties": {
+          "seenThrough": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "ReorderWorkspaceNodeRequest": {
+        "type": "object",
+        "required": ["beforeId", "afterId", "expectedRevision"],
+        "properties": {
+          "beforeId": { "type": ["string", "null"] },
+          "afterId": { "type": ["string", "null"] },
           "expectedRevision": { "type": "integer", "minimum": 1 }
         },
         "additionalProperties": false

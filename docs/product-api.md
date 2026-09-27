@@ -359,6 +359,22 @@ type ChangeProposal = {
 
 人工修改成功后脚本修订号增加。基于旧修订号的待确认提案不会被自动应用，并在下一次读取/确认时标记为 `conflicted`。
 
+### 3.5 工作区资源树
+
+资源树节点属于一个项目和片段。`parentId=null` 表示根级；`kind=folder` 时 `objectType=null`，`kind=object` 时必须提供 `objectType`。节点返回 `position`、`revision` 和可空的 `unseenUpdateAt`；后者表示仍待用户查看的 AI 更新。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `GET` | `/projects/:projectId/storyboards/:storyboardId/workspace-nodes` | 按顺序读取片段资源树节点。 |
+| `POST` | `/projects/:projectId/storyboards/:storyboardId/workspace-nodes` | 创建文件夹或对象；要求 `Idempotency-Key`。 |
+| `PATCH` | `/projects/:projectId/storyboards/:storyboardId/workspace-nodes/:nodeId` | 更新名称或父级；请求带 `expectedRevision`。 |
+| `PATCH` | `/projects/:projectId/storyboards/:storyboardId/workspace-nodes/:nodeId/order` | 将节点放在目标节点前后；跨文件夹时在同一事务中更新父级和顺序。`beforeId`、`afterId` 必须恰有一个非空，且带 `expectedRevision`。 |
+| `POST` | `/projects/:projectId/storyboards/:storyboardId/workspace-nodes/:nodeId/copies` | 复制节点；要求 `Idempotency-Key`。 |
+| `DELETE` | `/projects/:projectId/storyboards/:storyboardId/workspace-nodes/:nodeId?expectedRevision=N` | 删除节点；成功返回 `204`。 |
+| `PUT` | `/projects/:projectId/storyboards/:storyboardId/workspace-nodes/:nodeId/viewed` | 带 `seenThrough` 时间确认已查看；只清除不晚于该时刻的待查看标记。 |
+
+跨项目或跨片段的父节点、循环移动和受保护的脚本节点由服务端拒绝。客户端只在写入成功后把返回节点合入本地树；失败时保留正式状态并展示错误。
+
 ## 4. 资产接口
 
 ### 4.1 资产分区
@@ -483,13 +499,14 @@ type ChangeProposal = {
 }
 ```
 
-### 5.2 上传（可选实现）
+### 5.2 工作区对象媒体上传
 
-1. `POST /projects/:projectId/uploads` 获取一次性上传 URL 和 `uploadId`。
-2. 浏览器直接向对象存储上传。
-3. `POST /projects/:projectId/uploads/:uploadId/complete` 校验大小、类型和摘要并创建媒体。
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/projects/:projectId/storyboards/:storyboardId/workspace-nodes/:nodeId/media` | 为图片/视频对象确保媒体占位符，并返回媒体详情。 |
+| `PUT` | `/projects/:projectId/storyboards/:storyboardId/workspace-nodes/:nodeId/media?width=W&height=H&durationMs=D` | 本地运行时上传文件并绑定到对象；视频可传 `durationMs`。 |
 
-禁止由应用服务器把大视频完整缓冲到内存。
+上传使用原始文件字节及正确的 `Content-Type`。当前本地接口校验 MIME 与文件签名、对象类型、尺寸和大小（1 字节至 100 MB）；不支持本地媒体存储的部署返回依赖不可用错误。大文件直传对象存储属于后续扩展，不能把尚未实现的通用上传路径当成现有接口。
 
 ### 5.3 生成任务
 
@@ -497,10 +514,13 @@ type ChangeProposal = {
 | --- | --- | --- |
 | `GET` | `/generation-models` | 获取服务端模型白名单与输入能力。 |
 | `POST` | `/projects/:projectId/storyboards/:storyboardId/media/:mediaId/generations` | 用户编辑提示词后直接发起图片或视频生成。 |
+| `PUT` | `/projects/:projectId/storyboards/:storyboardId/generation-inputs/:inputId` | 本地运行时上传图片生成用的参考图；`inputId` 为客户端 UUID，重复上传相同内容可安全重试。 |
 | `GET` | `/projects/:projectId/generation-jobs/:jobId` | 查询状态。 |
 | `POST` | `/projects/:projectId/generation-jobs/:jobId/retry` | 失败后重试。 |
 
 直接生成请求必须携带 `Idempotency-Key`、`prompt`、`expectedRevision` 和可选生成参数。服务端在同一事务中更新提示词并写入生成任务/outbox，返回 `202`；这类任务的 `proposalId` 为 `null`。AI 提案确认仍在应用提案的事务内创建生成任务，客户端无需再额外创建。两条入口共享同一任务状态机：
+
+本地参考图上传使用 `Content-Type: image/jpeg|image/png|image/webp`，查询参数传 `name`、`width`、`height`，单张最多 8 MB；生成请求通过 `generation.input.mediaIds` 引用上传后返回的媒体 ID。云部署则在生成请求中直接携带输入图片数据，由云端保存。
 
 `queued | waitingForProvider | running | succeeded | failed | cancelled`
 
@@ -515,6 +535,7 @@ type ChangeProposal = {
 | `GET` | `/projects/:projectId/storyboards/:storyboardId/ai-thread` | 获取当前片段最近使用的线程绑定；尚未绑定时返回 `200 null`。 |
 | `POST` | `/projects/:projectId/storyboards/:storyboardId/ai-thread` | 创建并绑定一个 AgentRuntime 线程。 |
 | `GET` | `/projects/:projectId/storyboards/:storyboardId/ai-threads` | 按创建时间倒序列出当前片段的全部线程绑定，用于会话切换。 |
+| `DELETE` | `/projects/:projectId/storyboards/:storyboardId/ai-threads/:threadId` | 删除该片段指定会话及其绑定；成功返回 `204`。 |
 
 ```ts
 type WorkspaceThreadBinding = {
@@ -560,6 +581,9 @@ type WorkspaceThreadBinding = {
 `generation` 仅用于媒体提案且可省略。输入模式为 `textOnly`、
 `firstLastFrames` 或 `referenceImages`；首尾帧与参考关键帧互斥。服务端会把
 模型、输入媒体 ID 和输出参数固化到任务 `spec`，并校验模型能力及项目作用域。
+取消请求仍携带两个预期版本，但不修改目标内容，也不要求目标版本保持不变。
+如果目标变更使提案从 `pending` 变为 `conflicted`，取消可接受变更前的提案版本；
+已应用、已取消或已过期的提案仍不可再次取消。
 
 脚本提案成功响应：
 
@@ -588,10 +612,12 @@ type WorkspaceThreadBinding = {
 
 ## 7. AI 工具契约
 
-本地片段会话只注册以下五个工具。全部操作从 Runtime 提供的 `threadId` 解析当前项目和片段；输入不接受 `projectId`、`storyboardId` 或服务器文件路径。检索与读取返回当前数据库快照，三个修改工具只创建待确认提案，正式内容仍由用户确认接口修改。
+本地片段会话只注册以下七个工具。全部操作从 Runtime 提供的 `threadId` 解析当前项目和片段；输入不接受 `projectId`、`storyboardId` 或服务器文件路径。可信上下文包含当前片段的文件夹 ID、父级 ID 和名称。创建工具直接写入新的导航对象和媒体占位符；提示词保存工具直接更新现有工作区对象，但不触发生成；检索与读取返回当前数据库快照；三个提案工具只创建待确认提案，正式内容仍由用户确认接口修改。
 
 | 工具 | 输入重点 | 结果 |
 | --- | --- | --- |
+| `create_workspace_object` | `parentId`（根目录为 `null`）、`name`、`objectType=image/video`、`prompt` | 在当前片段指定目录原子创建图片或视频对象及媒体占位符，只保存提示词，不创建生成任务；工具调用可幂等重放。 |
+| `save_workspace_object_prompt` | `targetId`、`baseRevision`、`prompt` | 把提示词直接写入现有图片或视频对象的输入框；不创建提案或生成任务，支持幂等重放和修订冲突检查。 |
 | `search_storyboard_assets` | 可选 `query`、`kind`、`offset`、`limit` | 当前片段的文本、资产绑定、图片和视频摘要，含稳定 ID、状态和修订号；分页上限 100。 |
 | `read_storyboard_asset` | `kind`、`id` | 完整文本或提示词、状态、修订号、最近生成任务使用的图片输入。 |
 | `propose_text_patch` | `targetId`、`baseRevision`、`oldText`、`newText`、`summary` | 对当前片段脚本执行唯一匹配的精确替换，产生待确认提案。 |
@@ -601,6 +627,10 @@ type WorkspaceThreadBinding = {
 `input` 复用 `GenerationInputSelection`：`textOnly` 不传图片；图片工具可用 `referenceImages`；视频工具可用 `firstLastFrames` 或 `referenceImages`。前者含必选首帧与可选尾帧，后者含按顺序排列的参考图片 ID。两类图片模式互斥；服务端检查数量、就绪状态及片段可见性。首帧与尾帧允许选择同一图片。用户确认面板展示提案所选素材，并允许在提交确认前调整；任务使用确认时显示的选择。若确认接口未提供生成选项，服务端使用提案保存的 `input`。
 
 工具结果返回 `proposalId`、目标、`baseRevision`、`proposedInput` 和状态。共享资产媒体在检索结果中标为只读；修改它在当前片段的提示词时使用 `assetBinding` 覆盖提案，不更新全局媒体提示词。`read_storyboard_asset` 读取文本、提示词及元数据，不读取图片像素。普通空白文本节点只有导航记录，尚无文本内容存储，因此文本补丁仅支持已持久化的片段脚本。
+
+`create_workspace_object` 是唯一直接创建产品对象的工具。`parentId` 必须来自当前片段上下文中的文件夹（或为 `null`）；服务端会再次按线程绑定校验目录作用域。创建结果的媒体状态为 `placeholder`，提示词已保存，但不会写入 `generation_jobs`。AI 回合结束后客户端刷新资源树，因此新对象会出现在左侧栏。
+
+当用户只要求撰写或填入提示词时，AgentRuntime 使用 `save_workspace_object_prompt`。它只允许修改当前线程绑定片段内、由故事板拥有的图片/视频对象，原子更新提示词与修订号，不创建 `change_proposals` 或 `generation_jobs`。`propose_image_prompt_change` 与 `propose_video_prompt_change` 仅用于用户明确需要“确认后生成”的提案流程。
 
 ## 8. 事件接口
 
@@ -647,7 +677,7 @@ type WorkspaceThreadBinding = {
 ### 9.2 AI 修改提示词
 
 1. 用户在右侧发送消息。
-2. AgentRuntime 使用 `search_storyboard_assets` 和 `read_storyboard_asset` 确认目标及可引用图片，再调用对应的图片或视频提示词工具。
+2. AgentRuntime 使用 `search_storyboard_assets` 和 `read_storyboard_asset` 确认目标及可引用图片，再调用对应的图片或视频提示词工具；若用户要求新增对象，则从可信上下文选择目录并调用 `create_workspace_object`，此路径不会发起生成。
 3. 工具验证线程绑定、目标修订及引用素材，保存含生成输入的 `pending` 提案，返回提案 ID。
 4. 项目事件流发出 `proposal.created`，左侧对应项出现黄色状态。
 5. 用户在详情区检查提示词和引用素材，可调整生成选项，然后调用提案 `apply`。
@@ -658,6 +688,6 @@ type WorkspaceThreadBinding = {
 
 - 第一阶段只新增 `/api/v1` 产品接口，不破坏当前 `/api/threads` 契约。
 - 可选字段可以向后兼容地增加；删除字段、改变含义或收紧枚举需要新 API 版本。
-- 工具名称和必填字段视为模型契约。本次将旧脚本/媒体提案工具替换为五个定向工具，既有历史工具事件仍可读取，新的模型回合只暴露新工具。
+- 工具名称和必填字段视为模型契约。本次工具集包含一个对象创建工具、一个直接提示词保存工具、两个读取工具和三个定向提案工具；既有历史工具事件仍可读取，新的模型回合只暴露当前七个工具。
 - TypeScript 类型应从一份机器可读契约生成或由契约测试校验，不能在前后端各自手写后长期漂移。
 - 本文档是语义说明；[openapi.json](./openapi.json) 是机器可读的 OpenAPI 3.1 契约，并由前端构建执行生成文件漂移检查。

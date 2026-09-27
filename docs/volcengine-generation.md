@@ -37,13 +37,13 @@ ARK_API_KEY=...
 - `mediaPrompt` 按目标媒体的 `kind` 选择图片或视频模型。
 - `assetBindingPrompt` 生成片段私有派生图片，并在成功事务中更新 `derived_media_id`。
 
-输入快照只保存媒体 ID，不保存会过期的 URL。worker 提交任务前通过 `GenerationInputResolver` 取得对象存储的短期 HTTPS 签名地址。这样重试时可重新签名，同时不会接受用户提交的任意 URL，避免 SSRF 和跨项目素材引用。
+输入快照只保存媒体 ID，不保存会过期的 URL。worker 提交任务前通过 `GenerationInputResolver` 读取输入；对象存储使用短期 HTTPS 签名地址，本地媒体存储使用文件内容的 Base64 图片数据。这样重试时可重新读取素材，同时不会接受用户提交的任意 URL，避免 SSRF 和跨项目素材引用。
 
 ## 纯 Web 面试部署（无需 ECS / PostgreSQL）
 
 当前仓库另有一条轻量云路径：Vite 前端与 Rust 容器服务一起部署到 Vercel，私有 TOS 桶同时保存任务 JSON、首尾帧/参考关键帧和最终产物。它不使用实例文件系统，也不要求常驻 worker：
 
-1. 浏览器只把用户选中的现有图片素材和生成选项发到同源 Rust API，任何云密钥都不会进入 `VITE_` 变量或响应。
+1. 浏览器把用户选中的现有图片或新添加的图片与生成选项发到同源 Rust API，任何云密钥都不会进入 `VITE_` 变量或响应。
 2. API 把不可变请求和输入图写入 TOS，然后调用 Seedream 或 Seedance。任务状态在 `jobs/{jobId}.json`，最终产物在 `outputs/{jobId}/`。
 3. Seedream 会在创建请求内完成并转存；Seedance 返回任务 ID。浏览器轮询同源任务接口，每次 GET 只推进一次方舟查询，所以不需要后台进程。
 4. 预览使用一小时 TOS 签名 GET URL；桶保持私有，仅配置 GET/HEAD CORS。

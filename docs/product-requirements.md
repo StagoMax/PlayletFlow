@@ -214,9 +214,9 @@ Videoflow 为 AI 视频创作提供以“片段”为中心的工作区。用户
 
 #### US-AI-02 AI 工具
 
-片段会话只暴露五个产品工具：`search_storyboard_assets`、`read_storyboard_asset`、`propose_text_patch`、`propose_image_prompt_change`、`propose_video_prompt_change`。检索和读取只访问当前片段的资产；三种修改操作都生成待确认提案。图片与视频提示词提案保存结构化引用，确认界面展示并可调整引用素材。
+片段会话只暴露七个产品工具：`create_workspace_object`、`save_workspace_object_prompt`、`search_storyboard_assets`、`read_storyboard_asset`、`propose_text_patch`、`propose_image_prompt_change`、`propose_video_prompt_change`。检索和读取只访问当前片段的资产；三种提案操作都生成待确认提案。图片与视频提示词提案保存结构化引用，确认界面展示并可调整引用素材。对象创建工具只能在会话绑定片段的文件夹（或根目录）下创建图片/视频对象，原子保存媒体占位符和提示词，不创建生成任务。直接提示词保存工具只更新已有工作区图片/视频对象的输入框，不创建提案或生成任务。
 
-工具执行成功只代表提案已保存，不代表正式内容已更改。工具结果必须返回提案 ID、目标摘要、状态和需要用户确认的提示。
+提案工具执行成功只代表提案已保存，不代表正式内容已更改。对象创建和直接提示词保存工具是明确例外：执行成功即表示左侧栏对象或提示词已保存，但媒体仍未发送生成。提案工具结果必须返回提案 ID、目标摘要、状态和需要用户确认的提示。
 
 #### US-AI-03 确认、取消和重新生成
 

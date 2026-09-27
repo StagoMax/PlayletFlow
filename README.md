@@ -76,6 +76,24 @@ flowchart LR
 - [Node.js](https://nodejs.org/) 22 或更高版本
 - [pnpm](https://pnpm.io/installation) 10 或更高版本
 
+### Windows：统一启动并自动恢复
+
+项目根目录提供了持久化开发主管理器。它同时监测前端和后端；自己启动的服务退出后会自动重启，已经由其他终端启动的服务则只监测、不强行结束：
+
+```powershell
+# 后台启动前后端
+.\scripts\dev.ps1 start
+
+# 查看服务归属、端口和日志目录
+.\scripts\dev.ps1 status
+
+# 重启或停止主管理器拥有的服务
+.\scripts\dev.ps1 restart
+.\scripts\dev.ps1 stop
+```
+
+运行状态与日志保存在 `.videoflow/dev/`。前端地址为 <http://127.0.0.1:5173>，后端健康检查为 <http://127.0.0.1:8788/health>。
+
 ### 1. 获取代码
 
 ```bash
@@ -246,7 +264,9 @@ pnpm test:acceptance
 
 | 文档 | 内容 |
 | --- | --- |
-| [文档索引](docs/README.md) | 推荐阅读顺序与当前实施状态 |
+| [文档索引](docs/README.md) | 推荐阅读顺序与接口契约维护 |
+| [贡献指南](CONTRIBUTING.md) | 团队协作流程、代码约定与提交检查 |
+| [当前架构](docs/architecture.md) | 模块职责、依赖方向与关键流程 |
 | [产品需求](docs/product-requirements.md) | 用户故事、交互边界和验收场景 |
 | [产品 API](docs/product-api.md) | 接口、数据结构和调用顺序 |
 | [OpenAPI 契约](docs/openapi.json) | 前后端共享的机器可读接口定义 |
