@@ -622,17 +622,21 @@ type WorkspaceThreadBinding = {
 
 | 工具 | 输入重点 | 结果 |
 | --- | --- | --- |
-| `create_workspace_object` | `parentId`（根目录为 `null`）、`name`、`objectType=image/video`、`prompt` | 在当前片段指定目录创建图片或视频对象及媒体占位符，只保存提示词，不创建生成任务。 |
-| `save_workspace_object_prompt` | `targetId`、`baseRevision`、`prompt` | 把提示词直接写入现有图片或视频对象的输入框；不创建提案或生成任务，检查目标修订。 |
+| `create_workspace_object` | `parentId`（根目录为 `null`）、`name`、`objectType=image/video`、`prompt`、可选 `referenceIds` | 在当前片段指定目录创建图片或视频对象及媒体占位符，只保存提示词和资产引用，不创建生成任务。 |
+| `save_workspace_object_prompt` | `targetId`、`baseRevision`、`prompt`、可选 `referenceIds` | 把提示词和资产引用直接写入现有图片或视频对象的输入框；不创建提案或生成任务，检查目标修订。 |
 | `search_storyboard_assets` | 可选 `query`、`kind`、`offset`、`limit` | 当前片段的文本、资产绑定、图片和视频摘要，含稳定 ID、状态和修订号；分页上限 100。 |
 | `read_storyboard_asset` | `kind`、`id` | 完整文本或提示词、状态和修订号；本地路径还可返回最近生成任务使用的图片输入。 |
 | `propose_text_patch` | `targetId`、`baseRevision`、`oldText`、`newText`、`summary` | 对当前片段脚本执行唯一匹配的精确替换，产生待确认提案。 |
-| `propose_image_prompt_change` | `targetType=media/assetBinding`、`targetId`、`baseRevision`、`proposedPrompt`、`input`、`summary` | 图片或片段资产绑定的提示词提案及参考图选择。 |
-| `propose_video_prompt_change` | `targetId`、`baseRevision`、`proposedPrompt`、`input`、`summary` | 视频提示词提案及图片输入选择。 |
+| `propose_image_prompt_change` | `targetType=media/assetBinding`、`targetId`、`baseRevision`、`proposedPrompt`、`input`、可选 `referenceIds`、`summary` | 图片或片段资产绑定的提示词提案及参考图选择。 |
+| `propose_video_prompt_change` | `targetId`、`baseRevision`、`proposedPrompt`、`input`、可选 `referenceIds`、`summary` | 视频提示词提案及图片输入选择。 |
 
 `input` 复用 `GenerationInputSelection`：`textOnly` 不传图片；图片工具可用 `referenceImages`；视频工具可用 `firstLastFrames` 或 `referenceImages`。前者含必选首帧与可选尾帧，后者含按顺序排列的参考图片 ID。两类图片模式互斥；服务端检查数量、就绪状态及片段可见性。首帧与尾帧允许选择同一图片。用户确认面板展示提案所选素材，并允许在提交确认前调整；任务使用确认时显示的选择。若确认接口未提供生成选项，服务端使用提案保存的 `input`。
 
 工具结果返回 `proposalId`、目标、`baseRevision`、`proposedInput` 和状态。共享资产媒体在检索结果中标为只读；修改它在当前片段的提示词时使用 `assetBinding` 覆盖提案，不更新全局媒体提示词。`read_storyboard_asset` 读取文本、提示词及元数据，不读取图片像素。普通空白文本节点只有导航记录，尚无文本内容存储，因此文本补丁仅支持已持久化的片段脚本。
+
+四个媒体提示词写入工具都接受当前片段内资源的稳定 ID 作为 `referenceIds`；服务端按当前片段校验 ID，并使用资源的真实名称保存编辑器可还原的行内资产引用。没有显式传 ID 时，提示词中唯一匹配的 `@资产名` 也会解析为引用；重名资产必须提供 ID。图片/视频提案的 `input` 所选媒体 ID 同样写成可见引用。跨片段或已不存在的 ID 会拒绝写入。直接保存的图片引用在用户之后发送生成时成为图片输入；提案生成仍以 `input` 的结构化选择为准。
+此前仅保存了 `@资产名` 的提示词，编辑器会按当前片段内唯一匹配的显示名或媒体名恢复引用；下一次发送生成时会保存带 ID 的引用。重名或资源已删除时不会猜测绑定。
+此前提案若只在生成任务中保存了输入图片 ID，编辑器会从与当前媒体版本对应的最新任务恢复这些引用；用户在确认面板调整过的输入以实际任务规格为准。无法匹配当前媒体版本或已删除的图片不会按名称猜测。
 
 `create_workspace_object` 是唯一直接创建产品对象的工具。`parentId` 必须来自当前片段的文件夹（或为 `null`）；本地由线程绑定、云端由工作区密钥和快照再次校验作用域。创建结果的媒体状态为 `placeholder`，提示词已保存，但不会写入生成任务。AI 回合结束后客户端刷新本地资源树或重读云端快照，因此新对象会出现在左侧栏。
 
