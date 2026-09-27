@@ -31,6 +31,7 @@ export type WorkspaceObjectNode = {
   name: string;
   objectType: WorkspaceObjectType;
   mediaId?: string;
+  unseenUpdateAt: string | null;
   selection: WorkspaceSelection;
 };
 

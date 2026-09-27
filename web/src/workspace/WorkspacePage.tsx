@@ -1,15 +1,18 @@
-import { useCallback, useMemo, type ComponentType } from "react";
+import { useCallback, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import type { ComposerAssetReference } from "../composer/types";
 import { workspaceComposerAssets } from "../composer/workspaceAssets";
 import { ContentNavigator } from "../navigator/ContentNavigator";
 import { createProposalClient, useStoryboardProposals } from "../proposals";
 import { StoryboardPicker } from "../storyboards/StoryboardPicker";
+import { AssistantLauncher } from "./AssistantLauncher";
 import { WorkspaceCanvas } from "./WorkspaceCanvas";
+import { Icon } from "./Icons";
 import type { WorkspaceClient } from "./workspaceClient";
 import { useWorkspace } from "./WorkspaceContext";
 import { WorkspaceProvider } from "./WorkspaceProvider";
 import { WorkspaceEmpty, WorkspaceError, WorkspaceLoading } from "./WorkspaceStates";
 import { useWorkspaceQueries } from "./useWorkspaceQueries";
+import { useWorkspacePanelWidths } from "./useWorkspacePanelWidths";
 
 type WorkspacePageProps = {
   client: WorkspaceClient;
@@ -28,15 +31,20 @@ export type WorkspaceAssistantScope = {
 };
 
 function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: ComponentType<WorkspaceAssistantScope> }) {
+  const [assistantOpen, setAssistantOpen] = useState(true);
+  const panels = useWorkspacePanelWidths(assistantOpen);
+  const assistantCloseButtonRef = useRef<HTMLButtonElement>(null);
   const {
     data,
     state,
     current,
+    objectMedia,
     dispatch,
     createStoryboard,
     duplicateStoryboard,
     reorderStoryboard,
     commitAppliedProposal,
+    refreshNavigationTree,
     refreshScript,
   } = useWorkspace();
   const { byTarget, refresh: refreshProposals, updateProposal } = useStoryboardProposals(
@@ -45,7 +53,10 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
     current.storyboard.id,
   );
   const pendingUserActionTargets = useMemo(() => new Set(byTarget.keys()), [byTarget]);
-  const composerAssets = useMemo(() => workspaceComposerAssets(current), [current]);
+  const composerAssets = useMemo(
+    () => workspaceComposerAssets(current, objectMedia),
+    [current, objectMedia],
+  );
   const scriptProposals = byTarget.get(`script:${current.storyboard.id}`) ?? [];
   const mediaProposals = useMemo(
     () => [...byTarget.values()].flat().filter((proposal) => proposal.target.type !== "script"),
@@ -53,8 +64,9 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
   );
   const handleTurnSettled = useCallback(() => {
     refreshProposals();
+    void refreshNavigationTree(current.storyboard.id);
     void refreshScript(current.storyboard.id);
-  }, [current.storyboard.id, refreshProposals, refreshScript]);
+  }, [current.storyboard.id, refreshNavigationTree, refreshProposals, refreshScript]);
   const handleProposalApplied = useCallback((response: Parameters<typeof commitAppliedProposal>[0]) => {
     commitAppliedProposal(response);
   }, [commitAppliedProposal]);
@@ -62,12 +74,30 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
     if (reference.kind !== "text") return;
     dispatch({ type: "contentSelected", selection: reference.selection });
   }, [dispatch]);
+  const setAssistantVisibility = useCallback((open: boolean) => {
+    setAssistantOpen(open);
+    if (open) window.requestAnimationFrame(() => assistantCloseButtonRef.current?.focus());
+  }, []);
   return (
-    <div className="workspace-shell">
+    <div
+      ref={panels.shellRef}
+      className={`workspace-shell${assistantOpen ? "" : " assistant-closed"}`}
+      style={{
+        "--workspace-navigator-width": `${panels.widths.navigator}px`,
+        "--workspace-assistant-width": `${panels.widths.assistant}px`,
+      } as CSSProperties}
+    >
       <a className="skip-link" href="#workspace-main">跳到预览区</a>
-      <aside className="workspace-navigator">
+      <aside className="workspace-navigator" id="workspace-navigator">
         <header className="navigator-header">
-          <div className="workspace-brand"><span className="workspace-brand-mark">V</span><div><strong>Videoflow</strong><small>{data.project.name}</small></div></div>
+          <div className="workspace-brand">
+            <svg className="workspace-brand-mark" viewBox="0 0 34 34" aria-hidden="true">
+              <path d="M4 2 29 12.5 16.4 17.1 7.6 31 9.1 17.6Z" fill="#189df0" />
+              <path d="m16.4 17.1 12.6-4.6-8.4 16-13 2.5Z" fill="#0878d7" />
+              <path d="m4 2 5.1 15.6 7.3-.5Z" fill="#43bdff" />
+            </svg>
+            <strong>PlayletFlow</strong>
+          </div>
           <StoryboardPicker
             storyboards={data.storyboards}
             currentId={state.currentStoryboardId}
@@ -92,6 +122,23 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
         </header>
         <ContentNavigator pendingUserActionTargets={pendingUserActionTargets} />
       </aside>
+      <div
+        className={`workspace-splitter workspace-splitter--navigator${panels.dragging === "navigator" ? " is-dragging" : ""}`}
+        role="separator"
+        tabIndex={0}
+        aria-label="调整左侧导航宽度"
+        aria-orientation="vertical"
+        aria-controls="workspace-navigator workspace-main"
+        aria-valuemin={panels.limits("navigator").min}
+        aria-valuemax={panels.limits("navigator").max}
+        aria-valuenow={panels.widths.navigator}
+        onPointerDown={(event) => panels.onPointerDown("navigator", event)}
+        onPointerMove={panels.onPointerMove}
+        onPointerUp={panels.onPointerEnd}
+        onPointerCancel={panels.onPointerEnd}
+        onLostPointerCapture={panels.onPointerEnd}
+        onKeyDown={(event) => panels.onKeyDown("navigator", event)}
+      />
       <WorkspaceCanvas
         proposalClient={proposalClient}
         scriptProposals={scriptProposals}
@@ -100,16 +147,56 @@ function WorkspaceLayout({ assistantPanel: AssistantPanel }: { assistantPanel: C
         onProposalApplied={handleProposalApplied}
         onScriptSaved={refreshProposals}
       />
-      <aside className="workspace-assistant" aria-label="AI 对话区">
-        <AssistantPanel
-          projectId={data.project.id}
-          storyboardId={state.currentStoryboardId}
-          storyboardName={current.storyboard.name}
-          assets={composerAssets}
-          onTurnSettled={handleTurnSettled}
-          onSelectReference={handleSelectReference}
+      {assistantOpen ? (
+        <div
+          className={`workspace-splitter workspace-splitter--assistant${panels.dragging === "assistant" ? " is-dragging" : ""}`}
+          role="separator"
+          tabIndex={0}
+          aria-label="调整右侧 AI 对话宽度"
+          aria-orientation="vertical"
+          aria-controls="workspace-main workspace-assistant-panel"
+          aria-valuemin={panels.limits("assistant").min}
+          aria-valuemax={panels.limits("assistant").max}
+          aria-valuenow={panels.widths.assistant}
+          onPointerDown={(event) => panels.onPointerDown("assistant", event)}
+          onPointerMove={panels.onPointerMove}
+          onPointerUp={panels.onPointerEnd}
+          onPointerCancel={panels.onPointerEnd}
+          onLostPointerCapture={panels.onPointerEnd}
+          onKeyDown={(event) => panels.onKeyDown("assistant", event)}
         />
+      ) : null}
+      <aside
+        id="workspace-assistant-panel"
+        className="workspace-assistant"
+        aria-label="AI 对话区"
+        hidden={!assistantOpen}
+      >
+        <button
+          ref={assistantCloseButtonRef}
+          className="assistant-panel-close"
+          type="button"
+          aria-label="收起 AI 对话"
+          aria-controls="workspace-assistant-panel"
+          title="收起 AI 对话"
+          onClick={() => setAssistantVisibility(false)}
+        >
+          <Icon name="minimize" />
+        </button>
+        <div className="workspace-assistant-content">
+          <AssistantPanel
+            projectId={data.project.id}
+            storyboardId={state.currentStoryboardId}
+            storyboardName={current.storyboard.name}
+            assets={composerAssets}
+            onTurnSettled={handleTurnSettled}
+            onSelectReference={handleSelectReference}
+          />
+        </div>
       </aside>
+      {!assistantOpen ? (
+        <AssistantLauncher onOpen={() => setAssistantVisibility(true)} />
+      ) : null}
     </div>
   );
 }

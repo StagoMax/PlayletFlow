@@ -1,6 +1,6 @@
 /* eslint-disable */
 // This file is generated from docs/openapi.json. Do not edit it by hand.
-// Contract SHA-256: 3d2abdb282b58136d58a0f0329911ebad4fb86e037f61b9470eee749b8b6a6d2
+// Contract SHA-256: 4cf8c4b9a50b51bf3a3a191c799178741653a99f500fc7fe3c1dff53bbb0011d
 
 export type Page = {
   nextCursor: string | null;
@@ -160,6 +160,7 @@ export type WorkspaceNode = {
   revision: number;
   createdAt: string;
   updatedAt: string;
+  unseenUpdateAt: string | null;
 };
 
 export type CreateWorkspaceNodeRequest = {
@@ -172,6 +173,16 @@ export type CreateWorkspaceNodeRequest = {
 export type UpdateWorkspaceNodeRequest = {
   parentId: string | null;
   name: string;
+  expectedRevision: number;
+};
+
+export type MarkWorkspaceNodeViewedRequest = {
+  seenThrough: string;
+};
+
+export type ReorderWorkspaceNodeRequest = {
+  beforeId: string | null;
+  afterId: string | null;
   expectedRevision: number;
 };
 
@@ -505,8 +516,11 @@ export type ProductApiOperation =
   | "PATCH /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}"
   | "DELETE /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}"
   | "POST /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/copies"
+  | "PATCH /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/order"
+  | "PUT /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/viewed"
   | "POST /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/media"
   | "PUT /projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/media"
+  | "PUT /projects/{projectId}/storyboards/{storyboardId}/generation-inputs/{inputId}"
   | "GET /projects/{projectId}/storyboards/{storyboardId}/asset-sections"
   | "POST /projects/{projectId}/storyboards/{storyboardId}/asset-sections"
   | "PATCH /projects/{projectId}/storyboards/{storyboardId}/asset-sections/{sectionId}"
@@ -531,10 +545,12 @@ export type ProductApiOperation =
   | "GET /generation-models"
   | "POST /projects/{projectId}/storyboards/{storyboardId}/media/{mediaId}/generations"
   | "GET /projects/{projectId}/generation-jobs/{jobId}"
+  | "GET /projects/{projectId}/media/{mediaId}/generation-jobs/latest"
   | "POST /projects/{projectId}/generation-jobs/{jobId}/retry"
   | "GET /projects/{projectId}/storyboards/{storyboardId}/ai-thread"
   | "POST /projects/{projectId}/storyboards/{storyboardId}/ai-thread"
   | "GET /projects/{projectId}/storyboards/{storyboardId}/ai-threads"
+  | "DELETE /projects/{projectId}/storyboards/{storyboardId}/ai-threads/{threadId}"
   | "GET /projects/{projectId}/storyboards/{storyboardId}/proposals"
   | "GET /projects/{projectId}/proposals/{proposalId}"
   | "POST /projects/{projectId}/proposals/{proposalId}/apply"
@@ -561,8 +577,11 @@ export type ProductApiOperationId =
   | "updateWorkspaceNode"
   | "deleteWorkspaceNode"
   | "copyWorkspaceNode"
+  | "reorderWorkspaceNode"
+  | "markWorkspaceNodeViewed"
   | "ensureWorkspaceObjectMedia"
   | "uploadWorkspaceObjectMedia"
+  | "uploadGenerationInput"
   | "listAssetSections"
   | "createAssetSection"
   | "updateAssetSection"
@@ -587,10 +606,12 @@ export type ProductApiOperationId =
   | "listGenerationModels"
   | "requestMediaGeneration"
   | "getGenerationJob"
+  | "getLatestMediaGenerationJob"
   | "retryGenerationJob"
   | "getWorkspaceAiThread"
   | "createWorkspaceAiThread"
   | "listWorkspaceAiThreads"
+  | "deleteWorkspaceAiThread"
   | "listChangeProposals"
   | "getChangeProposal"
   | "applyChangeProposal"
@@ -617,8 +638,11 @@ export const PRODUCT_API_OPERATIONS = {
   updateWorkspaceNode: { method: "PATCH", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}" },
   deleteWorkspaceNode: { method: "DELETE", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}" },
   copyWorkspaceNode: { method: "POST", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/copies" },
+  reorderWorkspaceNode: { method: "PATCH", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/order" },
+  markWorkspaceNodeViewed: { method: "PUT", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/viewed" },
   ensureWorkspaceObjectMedia: { method: "POST", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/media" },
   uploadWorkspaceObjectMedia: { method: "PUT", path: "/projects/{projectId}/storyboards/{storyboardId}/workspace-nodes/{nodeId}/media" },
+  uploadGenerationInput: { method: "PUT", path: "/projects/{projectId}/storyboards/{storyboardId}/generation-inputs/{inputId}" },
   listAssetSections: { method: "GET", path: "/projects/{projectId}/storyboards/{storyboardId}/asset-sections" },
   createAssetSection: { method: "POST", path: "/projects/{projectId}/storyboards/{storyboardId}/asset-sections" },
   updateAssetSection: { method: "PATCH", path: "/projects/{projectId}/storyboards/{storyboardId}/asset-sections/{sectionId}" },
@@ -643,10 +667,12 @@ export const PRODUCT_API_OPERATIONS = {
   listGenerationModels: { method: "GET", path: "/generation-models" },
   requestMediaGeneration: { method: "POST", path: "/projects/{projectId}/storyboards/{storyboardId}/media/{mediaId}/generations" },
   getGenerationJob: { method: "GET", path: "/projects/{projectId}/generation-jobs/{jobId}" },
+  getLatestMediaGenerationJob: { method: "GET", path: "/projects/{projectId}/media/{mediaId}/generation-jobs/latest" },
   retryGenerationJob: { method: "POST", path: "/projects/{projectId}/generation-jobs/{jobId}/retry" },
   getWorkspaceAiThread: { method: "GET", path: "/projects/{projectId}/storyboards/{storyboardId}/ai-thread" },
   createWorkspaceAiThread: { method: "POST", path: "/projects/{projectId}/storyboards/{storyboardId}/ai-thread" },
   listWorkspaceAiThreads: { method: "GET", path: "/projects/{projectId}/storyboards/{storyboardId}/ai-threads" },
+  deleteWorkspaceAiThread: { method: "DELETE", path: "/projects/{projectId}/storyboards/{storyboardId}/ai-threads/{threadId}" },
   listChangeProposals: { method: "GET", path: "/projects/{projectId}/storyboards/{storyboardId}/proposals" },
   getChangeProposal: { method: "GET", path: "/projects/{projectId}/proposals/{proposalId}" },
   applyChangeProposal: { method: "POST", path: "/projects/{projectId}/proposals/{proposalId}/apply" },

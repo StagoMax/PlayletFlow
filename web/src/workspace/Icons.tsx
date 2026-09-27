@@ -3,7 +3,11 @@ import type { SVGProps } from "react";
 const glyphs = {
   "chevron-down": <path d="m7 10 5 5 5-5" />,
   "chevron-right": <path d="m9 6 6 6-6 6" />,
+  search: <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 5 5" /></>,
+  wrench: <><path d="M14.6 6.4a5 5 0 0 0-6.2 6.2L3 18a2 2 0 0 0 3 3l5.4-5.4a5 5 0 0 0 6.2-6.2L14 13l-3-3z" /></>,
+  minimize: <><path d="M4 14h6v6M20 10h-6V4" /><path d="m3 21 7-7M21 3l-7 7" /></>,
   "square-pen": <><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.375 2.625a1 1 0 0 1 3 3L12 15l-4 1 1-4z" /></>,
+  "message-plus": <><path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.5 8.8 8.8 0 0 1-4-.9L3 21l1.9-4.5a8.5 8.5 0 1 1 16.1-5Z" /><path d="M12.5 8v7m-3.5-3.5h7" /></>,
   check: <path d="m5 12 4 4L19 6" />,
   copy: <><rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></>,
   film: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M7 5v14M17 5v14M3 9h4m10 0h4M3 15h4m10 0h4" /></>,
@@ -22,6 +26,7 @@ const glyphs = {
   send: <><path d="m4 4 17 8-17 8 3-8z" /><path d="M7 12h14" /></>,
   stop: <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none" />,
   "arrow-down": <path d="M12 4v15M6.5 13.5 12 19l5.5-5.5" />,
+  "arrow-up": <path d="M12 20V5M6.5 10.5 12 5l5.5 5.5" />,
 } as const;
 
 export type IconName = keyof typeof glyphs;

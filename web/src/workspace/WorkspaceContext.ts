@@ -7,6 +7,7 @@ import type {
   MediaItem,
   StoryboardScript,
 } from "../productApi/generated";
+import type { GenerationImageFile } from "../generation/generationOptions";
 import type {
   StoryboardWorkspace,
   WorkspaceAction,
@@ -23,6 +24,7 @@ export type WorkspaceContextValue = {
   current: StoryboardWorkspace;
   objectMedia: Readonly<Record<string, MediaItem>>;
   publishObjectMedia: (objectId: string, media: MediaItem) => void;
+  publishWorkspaceNodeMedia: (storyboardId: string, nodeId: string, media: MediaItem) => void;
   dispatch: Dispatch<WorkspaceAction>;
   createStoryboard: (input: {
     name: string;
@@ -33,6 +35,7 @@ export type WorkspaceContextValue = {
   deleteStoryboard: () => Promise<void>;
   reorderStoryboard: (storyboardId: string, targetId: string, placement: "before" | "after") => Promise<void>;
   commitAppliedProposal: (response: ApplyProposalResponse) => void;
+  refreshNavigationTree: (storyboardId: string, signal?: AbortSignal) => Promise<void>;
   refreshScript: (storyboardId: string, signal?: AbortSignal) => Promise<StoryboardScript | null>;
   saveScript: (storyboardId: string, text: string, expectedRevision: number) => Promise<StoryboardScript>;
   createFolder: (storyboardId: string, parentId: string | null, name: string) => Promise<WorkspaceFolderNode>;
@@ -45,6 +48,9 @@ export type WorkspaceContextValue = {
   renameNode: (nodeId: string, name: string) => Promise<void>;
   deleteNode: (nodeId: string) => Promise<void>;
   copyNode: (nodeId: string) => Promise<void>;
+  reorderNode: (nodeId: string, targetId: string, placement: "before" | "after") => Promise<void>;
+  moveNode: (nodeId: string, parentId: string | null) => Promise<void>;
+  markObjectViewed: (storyboardId: string, nodeId: string, seenThrough: string) => Promise<void>;
   loadGenerationModels: (signal?: AbortSignal) => Promise<GenerationModel[]>;
   generateMedia: (
     storyboardId: string,
@@ -54,6 +60,7 @@ export type WorkspaceContextValue = {
     expectedRevision: number,
     generation: GenerationOptions,
     idempotencyKey: string,
+    imageFiles?: readonly GenerationImageFile[],
   ) => Promise<GenerationJob>;
 };
 

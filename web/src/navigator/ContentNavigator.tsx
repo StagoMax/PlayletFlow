@@ -18,7 +18,7 @@ export function ContentNavigator({
 }: {
   pendingUserActionTargets: ReadonlySet<string>;
 }) {
-  const { data, current, objectMedia, state, dispatch, createFolder, createObject, duplicateStoryboard, renameStoryboard, deleteStoryboard, renameNode, deleteNode, copyNode } = useWorkspace();
+  const { data, current, objectMedia, state, dispatch, createFolder, createObject, duplicateStoryboard, renameStoryboard, deleteStoryboard, renameNode, deleteNode, copyNode, reorderNode, moveNode } = useWorkspace();
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [intent, setIntent] = useState<CreationIntent | null>(null);
   const [actionTarget, setActionTarget] = useState<{ node: WorkspaceTreeNode; action: Exclude<ResourceAction, "copy">; root?: boolean } | null>(null);
@@ -50,6 +50,20 @@ export function ContentNavigator({
         pendingUserActionTargets={pendingUserActionTargets}
         onSelectFolder={setSelectedFolderId}
         onSelectObject={(selection) => dispatch({ type: "contentSelected", selection })}
+        onReorder={async (nodeId, targetId, placement) => {
+          setActionError("");
+          try { await reorderNode(nodeId, targetId, placement); }
+          catch (cause) {
+            setActionError(cause instanceof Error ? cause.message : "调整顺序失败，请重试。");
+          }
+        }}
+        onMove={async (nodeId, parentId) => {
+          setActionError("");
+          try { await moveNode(nodeId, parentId); }
+          catch (cause) {
+            setActionError(cause instanceof Error ? cause.message : "移动资源失败，请重试。");
+          }
+        }}
         onCreateRequest={(folderId, nextIntent) => {
           setSelectedFolderId(folderId);
           setIntent(nextIntent);

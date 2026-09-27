@@ -193,7 +193,7 @@ export function ScriptEditor({ storyboard, onSave, onSaved, review }: ScriptEdit
             ? "已修改 AI 建议 · 保存为人工脚本"
             : reviewState
               ? "AI 建议 · 可直接编辑，修改后保存为人工脚本"
-              : `版本 ${revision} · Ctrl / ⌘ + S 快速保存`)}
+              : dirty ? "未保存" : "已保存")}
         </div>
         <div id="script-editor-hint" className={visibleCharacterCount > MAX_SCRIPT_CHARS ? "over-limit" : ""}>
           {visibleCharacterCount.toLocaleString("zh-CN")} / {MAX_SCRIPT_CHARS.toLocaleString("zh-CN")} 字符

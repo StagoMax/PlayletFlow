@@ -5,10 +5,12 @@ import type {
   ReorderRequest,
   GenerationJob,
   GenerationModel,
+  MediaItem,
   RequestMediaGeneration,
   StoryboardScript,
   UpdateScriptRequest,
 } from "../productApi/generated";
+import type { GenerationImageFile } from "../generation/generationOptions";
 import type {
   StoryboardWorkspace,
   WorkspaceFolderNode,
@@ -88,6 +90,9 @@ export interface WorkspaceClient {
   renameNode(projectId: string, storyboardId: string, nodeId: string, name: string): Promise<WorkspaceTreeNode[]>;
   deleteNode(projectId: string, storyboardId: string, nodeId: string): Promise<WorkspaceTreeNode[]>;
   copyNode(projectId: string, storyboardId: string, nodeId: string): Promise<WorkspaceTreeNode[]>;
+  reorderNode(projectId: string, storyboardId: string, nodeId: string, targetId: string, placement: "before" | "after"): Promise<WorkspaceTreeNode[]>;
+  moveNode(projectId: string, storyboardId: string, nodeId: string, parentId: string | null): Promise<WorkspaceTreeNode[]>;
+  markObjectViewed(projectId: string, storyboardId: string, nodeId: string, seenThrough: string): Promise<WorkspaceTreeNode[]>;
   requestMediaGeneration(
     projectId: string,
     storyboardId: string,
@@ -95,6 +100,8 @@ export interface WorkspaceClient {
     request: RequestMediaGeneration,
     idempotencyKey: string,
     signal?: AbortSignal,
+    imageFiles?: readonly GenerationImageFile[],
+    referenceMedia?: readonly MediaItem[],
   ): Promise<WorkspaceGenerationJob>;
   getGenerationJob(
     projectId: string,

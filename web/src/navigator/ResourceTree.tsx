@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent } from "react";
 import { HoverPreview } from "../preview/HoverPreview";
 import { mediaStatusLabel } from "../preview/formatMedia";
 import { MediaThumbnail } from "../preview/MediaThumbnail";
 import { Icon } from "../workspace/Icons";
-import { selectionMatches } from "../workspace/resourceTree";
+import { folderChain, selectionMatches } from "../workspace/resourceTree";
 import type { NavigatorItem, WorkspaceObjectType, WorkspaceSelection, WorkspaceTreeNode } from "../workspace/types";
 import type { MediaItem } from "../productApi/generated";
-import { PendingUserActionDot } from "./PendingUserActionDot";
+import { WorkspaceAttentionDot } from "./WorkspaceAttentionDot";
 
 export type ResourceCreationIntent =
   | { kind: "folder" }
@@ -33,15 +33,33 @@ type ResourceTreeProps = {
   pendingUserActionTargets: ReadonlySet<string>;
   onSelectFolder: (folderId: string | null) => void;
   onSelectObject: (selection: WorkspaceSelection) => void;
+  onReorder: (nodeId: string, targetId: string, placement: "before" | "after") => Promise<void>;
+  onMove: (nodeId: string, parentId: string | null) => Promise<void>;
   onCreateRequest: (folderId: string | null, intent: ResourceCreationIntent) => void;
   onActionRequest: (node: WorkspaceTreeNode, action: ResourceAction) => void;
   onRootActionRequest: (action: ResourceAction) => void;
+};
+
+type DragState = { id: string; parentId: string | null };
+type DropState = { id: string | null; placement: "before" | "after" | "inside" };
+type NodeDrag = {
+  source: DragState | null;
+  drop: DropState | null;
+  busy: boolean;
+  start: (event: ReactDragEvent<HTMLElement>, nodeId: string, parentId: string | null) => void;
+  over: (event: ReactDragEvent<HTMLElement>, nodeId: string | null, parentId: string | null, folder: boolean) => void;
+  finish: () => void;
+  commit: (event: ReactDragEvent<HTMLElement>, nodeId: string | null, parentId: string | null, folder: boolean) => void;
 };
 
 export function ResourceTree(props: ResourceTreeProps) {
   const itemsById = useMemo(() => new Map(props.items.map((item) => [item.id, item])), [props.items]);
   const [createTarget, setCreateTarget] = useState<CreateMenuTarget | null>(null);
   const [contextTarget, setContextTarget] = useState<{ node: WorkspaceTreeNode; root: boolean; trigger: HTMLButtonElement; top: number; left: number } | null>(null);
+  const [dragSource, setDragSource] = useState<DragState | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropState | null>(null);
+  const [reorderBusy, setReorderBusy] = useState(false);
+  const [rootExpanded, setRootExpanded] = useState(true);
   const menuRef = useRef<HTMLDivElement>(null);
   const contextRef = useRef<HTMLDivElement>(null);
 
@@ -135,10 +153,67 @@ export function ResourceTree(props: ResourceTreeProps) {
     setCreateTarget(null);
   };
 
+  const resolveDrop = (event: ReactDragEvent<HTMLElement>, nodeId: string | null, parentId: string | null, folder: boolean): DropState | null => {
+    if (!dragSource || reorderBusy || dragSource.id === nodeId) return null;
+    if (nodeId === null) return dragSource.parentId === null ? null : { id: null, placement: "inside" };
+    if (parentId !== null && folderChain(props.nodes, parentId)?.some((node) => node.id === dragSource.id)) return null;
+    if (folder) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const fraction = (event.clientY - rect.top) / rect.height;
+      const placement = fraction < .25 ? "before" : fraction > .75 ? "after" : "inside";
+      if (placement === "inside" && (dragSource.parentId === nodeId
+        || folderChain(props.nodes, nodeId)?.some((node) => node.id === dragSource.id))) return null;
+      return { id: nodeId, placement };
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    return { id: nodeId, placement: event.clientY < rect.top + rect.height / 2 ? "before" : "after" };
+  };
+
+  const drag: NodeDrag = {
+    source: dragSource,
+    drop: dropTarget,
+    busy: reorderBusy,
+    start: (event, nodeId, parentId) => {
+      if (reorderBusy) { event.preventDefault(); return; }
+      setCreateTarget(null);
+      setContextTarget(null);
+      setDragSource({ id: nodeId, parentId });
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", nodeId);
+    },
+    over: (event, nodeId, parentId, folder) => {
+      event.stopPropagation();
+      const target = resolveDrop(event, nodeId, parentId, folder);
+      if (!target) { setDropTarget(null); return; }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      setDropTarget((current) => current?.id === target.id && current.placement === target.placement
+        ? current : target);
+    },
+    finish: () => { setDragSource(null); setDropTarget(null); },
+    commit: (event, nodeId, parentId, folder) => {
+      event.stopPropagation();
+      const target = resolveDrop(event, nodeId, parentId, folder);
+      if (!dragSource || !target) return;
+      event.preventDefault();
+      const sourceId = dragSource.id;
+      setDragSource(null);
+      setDropTarget(null);
+      setReorderBusy(true);
+      const action = target.placement === "inside"
+        ? props.onMove(sourceId, target.id)
+        : props.onReorder(sourceId, target.id!, target.placement);
+      void action.finally(() => setReorderBusy(false));
+    },
+  };
+
   return (
     <div className="resource-tree-shell">
-      <div className={`resource-tree__root${createTarget?.folderId === null ? " menu-open" : ""}`}>
-        <button type="button" className="resource-tree__root-name" onClick={() => props.onSelectFolder(null)}
+      <div className={`resource-tree__root${createTarget?.folderId === null ? " menu-open" : ""}${dropTarget?.id === null && dropTarget.placement === "inside" ? " drop-inside" : ""}`}
+        onDragOver={(event) => drag.over(event, null, null, true)}
+        onDrop={(event) => drag.commit(event, null, null, true)}>
+        <button type="button" className="resource-tree__root-name" aria-expanded={rootExpanded}
+          onClick={() => { props.onSelectFolder(null); setRootExpanded((value) => !value); }}
           onContextMenu={(event) => { event.preventDefault(); openContextMenu(rootNode, event.currentTarget, event.clientX, event.clientY, true); }}
           onKeyDown={(event) => {
             if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
@@ -146,7 +221,10 @@ export function ResourceTree(props: ResourceTreeProps) {
             const rect = event.currentTarget.getBoundingClientRect();
             openContextMenu(rootNode, event.currentTarget, rect.left + 24, rect.bottom, true);
           }}>
-          <Icon name="folder" /><span>{props.rootName}</span>
+          <span className="resource-tree__root-title">
+            <span className="resource-tree__node-label">{props.rootName}</span>
+            {!rootExpanded ? <span className="resource-tree__collapsed-count" aria-hidden="true">{countObjects(props.nodes)} 项</span> : null}
+          </span>
         </button>
         <CreateButton
           folderName={props.rootName}
@@ -154,12 +232,14 @@ export function ResourceTree(props: ResourceTreeProps) {
           onClick={(event) => openCreateMenu(null, props.rootName, event)}
         />
       </div>
-      <ul className="resource-tree" role="tree" aria-label="片段资源树">
+      {rootExpanded ? <ul className="resource-tree" role="tree" aria-label="片段资源树">
         {props.nodes.map((node) => (
           <ResourceNode
             key={node.id}
             node={node}
             depth={0}
+            parentId={null}
+            drag={drag}
             itemsById={itemsById}
             createTargetId={createTarget?.folderId}
             onOpenCreateMenu={openCreateMenu}
@@ -168,7 +248,7 @@ export function ResourceTree(props: ResourceTreeProps) {
             {...props}
           />
         ))}
-      </ul>
+      </ul> : null}
       {createTarget ? (
         <div
           ref={menuRef}
@@ -221,6 +301,10 @@ function containsScript(node: WorkspaceTreeNode): boolean {
     : node.selection.kind === "script";
 }
 
+function countObjects(nodes: WorkspaceTreeNode[]): number {
+  return nodes.reduce((count, node) => count + (node.kind === "folder" ? countObjects(node.children) : 1), 0);
+}
+
 function CreateButton({
   folderName,
   open,
@@ -247,6 +331,8 @@ function CreateButton({
 function ResourceNode({
   node,
   depth,
+  parentId,
+  drag,
   itemsById,
   createTargetId,
   onOpenCreateMenu,
@@ -256,6 +342,8 @@ function ResourceNode({
 }: ResourceTreeProps & {
   node: WorkspaceTreeNode;
   depth: number;
+  parentId: string | null;
+  drag: NodeDrag;
   itemsById: Map<string, NavigatorItem>;
   createTargetId: string | null | undefined;
   onOpenCreateMenu: (folderId: string | null, folderName: string, event: MouseEvent<HTMLButtonElement>) => void;
@@ -264,22 +352,24 @@ function ResourceNode({
 }) {
   const [expanded, setExpanded] = useState(true);
   const style = { "--tree-depth": depth } as CSSProperties;
+  const dropClass = drag.drop?.id === node.id ? ` drop-${drag.drop.placement}` : "";
+  const draggingClass = drag.source?.id === node.id ? " is-dragging" : "";
   if (node.kind === "folder") {
+    const objectCount = countObjects(node.children);
     return (
-      <li role="treeitem" aria-expanded={expanded} style={style}>
-        <div className={`resource-tree__folder${createTargetId === node.id ? " menu-open" : ""}`}>
-          <button
-            type="button"
-            className="resource-tree__toggle"
-            aria-label={`${expanded ? "折叠" : "展开"}${node.name}`}
-            onClick={() => setExpanded((value) => !value)}
-          >
-            <Icon name="chevron-right" className={expanded ? "expanded" : ""} />
-          </button>
-          <button type="button" className="resource-tree__folder-name" onClick={() => props.onSelectFolder(node.id)}
+      <li role="treeitem" aria-expanded={expanded} style={style}
+        className={drag.drop?.id === node.id && drag.drop.placement === "after" ? "resource-tree__branch drop-after" : "resource-tree__branch"}>
+        <div className={`resource-tree__folder${createTargetId === node.id ? " menu-open" : ""}${drag.drop?.id === node.id && drag.drop.placement !== "after" ? dropClass : ""}${draggingClass}`}
+          onDragOver={(event) => drag.over(event, node.id, parentId, true)}
+          onDrop={(event) => drag.commit(event, node.id, parentId, true)}>
+          <button type="button" className="resource-tree__folder-name" aria-expanded={expanded}
+            onClick={() => { props.onSelectFolder(node.id); setExpanded((value) => !value); }}
+            draggable={!drag.busy} title="拖拽排序或移入文件夹"
+            onDragStart={(event) => drag.start(event, node.id, parentId)}
+            onDragEnd={drag.finish}
             onContextMenu={(event) => onOpenContextMenu(node, event)} onKeyDown={(event) => onContextKey(node, event)}>
-            <Icon name="folder" />
-            <span>{node.name}</span>
+            <span className="resource-tree__node-label">{node.name}</span>
+            {!expanded ? <span className="resource-tree__item-count" aria-hidden="true">{objectCount} 项</span> : null}
           </button>
           <CreateButton
             folderName={node.name}
@@ -294,6 +384,8 @@ function ResourceNode({
                 key={child.id}
                 node={child}
                 depth={depth + 1}
+                parentId={node.id}
+                drag={drag}
                 itemsById={itemsById}
                 createTargetId={createTargetId}
                 onOpenCreateMenu={onOpenCreateMenu}
@@ -313,22 +405,30 @@ function ResourceNode({
     : selectionMatches(node.selection, props.selection);
   const savedMedia = node.selection.kind === "emptyObject" ? props.objectMedia[node.id] : null;
   const objectItem: NavigatorItem | null = savedMedia && savedMedia.status !== "placeholder"
-    ? { id: node.id, name: node.name, description: "", label: "", accent: "#aeb7ff", media: savedMedia }
+    ? { id: node.id, name: node.name, description: "", label: "", accent: "var(--accent)", media: savedMedia }
     : null;
   const item = node.selection.kind === "item" ? itemsById.get(node.selection.itemId) : objectItem;
   const pendingTarget = node.selection.kind === "script"
     ? `script:${node.selection.storyboardId}`
-    : item
-      ? `mediaPrompt:${item.media.id}`
-      : null;
+    : node.selection.kind === "emptyObject" && node.objectType !== "text"
+      ? `mediaPrompt:${node.mediaId ?? node.id}`
+      : item ? `mediaPrompt:${item.media.id}` : null;
   const pendingUserAction = pendingTarget !== null && props.pendingUserActionTargets.has(pendingTarget);
+  const attentionLabel = [
+    pendingUserAction ? "有待确认或取消的 AI 建议" : null,
+    node.unseenUpdateAt ? "AI 内容待查看，打开后自动清除" : null,
+  ].filter(Boolean).join("；");
   const row = (
     <button
       type="button"
       className={`resource-tree__object${selected ? " selected" : ""}${node.selection.kind === "script" ? " script-card" : ""}`}
       style={style}
-      aria-label={`${node.selection.kind === "emptyObject" ? node.name : item ? `${item.name}，${mediaStatusLabel(item.media.status)}` : node.name}${pendingUserAction ? "，等待用户处理" : ""}`}
+      aria-label={`${node.selection.kind === "emptyObject" ? node.name : item ? `${item.name}，${mediaStatusLabel(item.media.status)}` : node.name}${attentionLabel ? `，${attentionLabel}` : ""}`}
       aria-pressed={selected}
+      draggable={!drag.busy}
+      title="拖拽排序或移入文件夹"
+      onDragStart={(event) => drag.start(event, node.id, parentId)}
+      onDragEnd={drag.finish}
       onClick={() => props.onSelectObject({ ...node.selection, nodeId: node.id })}
       onContextMenu={(event) => onOpenContextMenu(node, event)}
       onKeyDown={(event) => onContextKey(node, event)}
@@ -338,10 +438,14 @@ function ResourceNode({
         {item?.media.kind === "video" ? <span className="resource-tree__video-mark"><Icon name="pause" /></span> : null}
       </span>
       <span className="resource-tree__object-name">{node.name}</span>
-      {pendingUserAction ? <PendingUserActionDot /> : null}
+      {attentionLabel ? <WorkspaceAttentionDot label={attentionLabel} kind={pendingUserAction ? "action" : "unseen"} /> : null}
       {node.selection.kind === "script" ? <span className="sr-only">{props.scriptText}</span> : null}
     </button>
   );
 
-  return <li role="treeitem">{item ? <HoverPreview item={item} disabled={selected}>{row}</HoverPreview> : row}</li>;
+  return <li role="treeitem" className={`resource-tree__leaf${dropClass}${draggingClass}`}
+    onDragOver={(event) => drag.over(event, node.id, parentId, false)}
+    onDrop={(event) => drag.commit(event, node.id, parentId, false)}>
+    {item ? <HoverPreview item={item} disabled={selected}>{row}</HoverPreview> : row}
+  </li>;
 }

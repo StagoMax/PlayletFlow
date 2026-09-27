@@ -103,7 +103,7 @@ export function StoryboardPicker({ storyboards, currentId, onSelect, onCreate, o
 
   return (
     <div className="storyboard-picker" ref={rootRef}>
-      <span className="storyboard-current-index">片段 {current.index}</span>
+      <span className="storyboard-current-label">片段流</span>
       <button
         className="storyboard-trigger storyboard-trigger--compact"
         type="button"

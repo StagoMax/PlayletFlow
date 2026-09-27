@@ -1,5 +1,7 @@
 import type {
   CreateWorkspaceNodeRequest,
+  MarkWorkspaceNodeViewedRequest,
+  ReorderWorkspaceNodeRequest,
   UpdateWorkspaceNodeRequest,
   WorkspaceNode,
 } from "../productApi/generated";
@@ -17,8 +19,10 @@ export interface WorkspaceNodeClient {
     idempotencyKey?: string,
   ): Promise<WorkspaceNode>;
   update(projectId: string, storyboardId: string, nodeId: string, body: UpdateWorkspaceNodeRequest): Promise<WorkspaceNode>;
+  reorder(projectId: string, storyboardId: string, nodeId: string, body: ReorderWorkspaceNodeRequest): Promise<WorkspaceNode>;
   delete(projectId: string, storyboardId: string, nodeId: string, expectedRevision: number): Promise<void>;
   copy(projectId: string, storyboardId: string, nodeId: string): Promise<WorkspaceNode>;
+  markViewed(projectId: string, storyboardId: string, nodeId: string, body: MarkWorkspaceNodeViewedRequest): Promise<WorkspaceNode>;
 }
 
 export function createWorkspaceNodeClient(baseUrl = "/api/v1"): WorkspaceNodeClient {
@@ -43,12 +47,20 @@ export function createWorkspaceNodeClient(baseUrl = "/api/v1"): WorkspaceNodeCli
       request<WorkspaceNode>(nodeUrl(projectId, storyboardId, nodeId), {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       }),
+    reorder: (projectId, storyboardId, nodeId, body) =>
+      request<WorkspaceNode>(`${nodeUrl(projectId, storyboardId, nodeId)}/order`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      }),
     delete: async (projectId, storyboardId, nodeId, expectedRevision) => {
       await request<void>(`${nodeUrl(projectId, storyboardId, nodeId)}?expectedRevision=${expectedRevision}`, { method: "DELETE" });
     },
     copy: (projectId, storyboardId, nodeId) =>
       request<WorkspaceNode>(`${nodeUrl(projectId, storyboardId, nodeId)}/copies`, {
         method: "POST", headers: { "Idempotency-Key": `workspace-${crypto.randomUUID()}` },
+      }),
+    markViewed: (projectId, storyboardId, nodeId, body) =>
+      request<WorkspaceNode>(`${nodeUrl(projectId, storyboardId, nodeId)}/viewed`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       }),
   };
 }
@@ -124,6 +136,7 @@ export function workspaceTreeNodeFromNode(node: WorkspaceNode): WorkspaceTreeNod
     name: node.name,
     objectType,
     mediaId: node.targetType === "media" && node.targetId === node.id ? node.targetId : undefined,
+    unseenUpdateAt: node.unseenUpdateAt,
     selection: selectionFromNode(node, objectType),
   };
 }

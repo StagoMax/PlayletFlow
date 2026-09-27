@@ -1,3 +1,4 @@
+import { useEffect, useState, type ReactNode } from "react";
 import { MediaMetadata } from "../preview/MediaMetadata";
 import { workspaceComposerAssets } from "../composer/workspaceAssets";
 import type { ApplyProposalResponse, ChangeProposal } from "../productApi/generated";
@@ -6,9 +7,10 @@ import { MediaPromptComposer } from "../preview/MediaPromptComposer";
 import { MediaViewer } from "../preview/MediaViewer";
 import { Icon } from "./Icons";
 import { ObjectMediaWorkspace } from "./ObjectMediaWorkspace";
-import { findObject, findTreeNode } from "./resourceTree";
+import { findObject, findObjectForSelection, findTreeNode } from "./resourceTree";
 import { ScriptEditor } from "./ScriptEditor";
 import { useWorkspace } from "./WorkspaceContext";
+import { workspaceObjectMediaClient } from "./workspaceObjectMediaClient";
 import type { NavigatorItem, WorkspaceObjectNode } from "./types";
 
 function findItem(groups: { items: NavigatorItem[] }[], itemId: string) {
@@ -17,6 +19,28 @@ function findItem(groups: { items: NavigatorItem[] }[], itemId: string) {
     if (item) return item;
   }
   return null;
+}
+
+function MediaProposalReview({ count, children }: { count: number; children: ReactNode }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <section className={`workspace-media-proposals${open ? "" : " workspace-media-proposals--collapsed"}`}
+      aria-label="待确认的媒体修改">
+      {open ? (
+        <>
+          <header className="workspace-media-proposals__header">
+            <h2>待确认的 AI 修改</h2>
+            <button type="button" onClick={() => setOpen(false)} aria-label="关闭建议面板">关闭</button>
+          </header>
+          {children}
+        </>
+      ) : (
+        <button type="button" className="workspace-media-proposals__reopen" onClick={() => setOpen(true)}>
+          查看待确认的 AI 修改（{count}）
+        </button>
+      )}
+    </section>
+  );
 }
 
 type WorkspaceCanvasProps = {
@@ -36,7 +60,17 @@ export function WorkspaceCanvas({
   onProposalApplied,
   onScriptSaved,
 }: WorkspaceCanvasProps) {
-  const { current, state, saveScript, generateMedia, loadGenerationModels } = useWorkspace();
+  const {
+    data,
+    current,
+    objectMedia,
+    state,
+    saveScript,
+    generateMedia,
+    loadGenerationModels,
+    publishWorkspaceNodeMedia,
+    markObjectViewed,
+  } = useWorkspace();
   const item = state.selection.kind === "item"
     ? findItem([...current.assetGroups, ...current.videoGroups], state.selection.itemId)
     : null;
@@ -45,18 +79,47 @@ export function WorkspaceCanvas({
     : null;
   const isScript = state.selection.kind === "script";
   const selectedNode = state.selection.nodeId ? findTreeNode(current.navigationTree, state.selection.nodeId) : null;
+  const selectedObject = selectedNode?.kind === "object"
+    ? selectedNode
+    : findObjectForSelection(current.navigationTree, state.selection);
   const title = isScript ? "片段脚本" : selectedNode?.name ?? item?.name ?? emptyObject?.name ?? "未选择内容";
-  const referenceMedia = [...current.assetGroups, ...current.videoGroups]
-    .flatMap((group) => group.items)
-    .filter((candidate) => candidate.media.kind === "image"
-      && candidate.media.status === "ready"
-      && candidate.media.id !== item?.media.id)
-    .map((candidate) => ({ id: candidate.media.id, name: candidate.name }));
+  const composerAssets = workspaceComposerAssets(current, objectMedia);
+  const referenceMedia = composerAssets.flatMap((asset) =>
+    asset.kind === "image" && asset.mediaId && asset.previewMedia?.status === "ready"
+      ? [{ id: asset.mediaId, name: asset.name }]
+      : []);
   const scriptProposal = scriptProposals[0] ?? null;
   const allItems = [...current.assetGroups, ...current.videoGroups].flatMap((group) => group.items);
-  const allReadyImages = allItems
-    .filter((candidate) => candidate.media.kind === "image" && candidate.media.status === "ready")
-    .map((candidate) => ({ id: candidate.media.id, name: candidate.name }));
+  const allReadyImages = referenceMedia;
+  const objectTargetMediaId = emptyObject?.mediaId ?? emptyObject?.id;
+  const objectProposals = mediaProposals.filter((proposal) =>
+    proposal.target.type === "mediaPrompt" && proposal.target.mediaId === objectTargetMediaId);
+
+  useEffect(() => {
+    const unseenUpdateAt = selectedObject?.unseenUpdateAt;
+    if (!unseenUpdateAt || selectedObject.objectType === "text") return;
+    const mediaId = item?.media.id ?? emptyObject?.mediaId ?? emptyObject?.id;
+    if (!mediaId) return;
+    const controller = new AbortController();
+    let viewedFrame = 0;
+    void workspaceObjectMediaClient.get(data.project.id, mediaId, controller.signal)
+      .then((media) => {
+        publishWorkspaceNodeMedia(current.storyboard.id, selectedObject.id, media);
+        viewedFrame = window.requestAnimationFrame(() => {
+          void markObjectViewed(current.storyboard.id, selectedObject.id, unseenUpdateAt)
+            .catch((cause: unknown) => console.warn("无法标记 AI 内容为已查看", cause));
+        });
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) console.warn("无法加载待查看的 AI 内容", cause);
+      });
+    return () => {
+      controller.abort();
+      window.cancelAnimationFrame(viewedFrame);
+    };
+  }, [current.storyboard.id, data.project.id, emptyObject?.id, emptyObject?.mediaId, item?.media.id,
+    markObjectViewed, publishWorkspaceNodeMedia, selectedObject?.id, selectedObject?.objectType,
+    selectedObject?.unseenUpdateAt]);
 
   return (
     <main className="workspace-canvas" id="workspace-main" tabIndex={-1}>
@@ -99,7 +162,26 @@ export function WorkspaceCanvas({
             {item ? <MediaMetadata item={item} /> : null}
           </header>
           {emptyObject && emptyObject.objectType !== "text" ? (
-            <ObjectMediaWorkspace key={emptyObject.id} object={emptyObject} />
+            <ObjectMediaWorkspace key={emptyObject.id} object={emptyObject} proposals={objectProposals.length > 0 ? (
+              <MediaProposalReview key={emptyObject.id} count={objectProposals.length}>
+                {objectProposals.map((proposal) => (
+                  <ProposalPanel key={proposal.id} client={proposalClient}
+                    projectId={data.project.id} proposal={proposal} targetName={emptyObject.name}
+                    currentTargetRevision={objectMedia[emptyObject.id]?.revision ?? proposal.baseRevision}
+                    generationContext={{ kind: emptyObject.objectType === "video" ? "video" : "image", media: allReadyImages }}
+                    applyBlockedReason={objectMedia[emptyObject.id] && objectMedia[emptyObject.id].revision !== proposal.baseRevision
+                      ? "正式内容已更新，请重新发起建议。" : undefined}
+                    onProposalChange={onProposalChange}
+                    onApplied={(response) => {
+                      onProposalApplied(response);
+                      if (!objectTargetMediaId) return;
+                      void workspaceObjectMediaClient.get(data.project.id, objectTargetMediaId)
+                        .then((media) => publishWorkspaceNodeMedia(current.storyboard.id, emptyObject.id, media))
+                        .catch((cause: unknown) => console.warn("无法刷新已确认的媒体提示词", cause));
+                    }} />
+                ))}
+              </MediaProposalReview>
+            ) : null} />
           ) : emptyObject ? (
             <div className="canvas-body empty-object-canvas-body">
               <EmptyObjectState object={emptyObject} />
@@ -109,8 +191,7 @@ export function WorkspaceCanvas({
               <section className="media-preview-workspace" aria-label="媒体工作区">
                 <MediaViewer item={item} />
                 {mediaProposals.length > 0 ? (
-                  <section className="workspace-media-proposals" aria-label="待确认的媒体修改">
-                    <h2>待确认的 AI 修改</h2>
+                  <MediaProposalReview key={state.selection.nodeId ?? item?.id ?? "media"} count={mediaProposals.length}>
                     {mediaProposals.map((proposal) => {
                       const targetMediaId = proposal.target.type === "mediaPrompt" ? proposal.target.mediaId : null;
                       const targetItem = targetMediaId
@@ -137,18 +218,19 @@ export function WorkspaceCanvas({
                         />
                       );
                     })}
-                  </section>
+                  </MediaProposalReview>
                 ) : null}
                 {item ? (
                   <div className="media-prompt-dock">
                     <MediaPromptComposer
                       key={item.id}
                       initialPrompt={item.media.prompt ?? ""}
+                      draftKey={`${data.project.id}:${item.media.id}`}
                       kind={item.media.kind}
                       media={referenceMedia}
-                      assets={workspaceComposerAssets(current)}
+                      assets={composerAssets}
                       loadModels={loadGenerationModels}
-                      onGenerate={(prompt, generation, idempotencyKey) => generateMedia(
+                      onGenerate={(prompt, generation, idempotencyKey, imageFiles) => generateMedia(
                         current.storyboard.id,
                         item.id,
                         item.media.id,
@@ -156,6 +238,7 @@ export function WorkspaceCanvas({
                         item.media.revision,
                         generation,
                         idempotencyKey,
+                        imageFiles,
                       )}
                     />
                   </div>

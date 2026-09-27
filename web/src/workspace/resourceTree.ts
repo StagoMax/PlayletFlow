@@ -18,6 +18,7 @@ export function createNavigationTree(
         id: `script-${storyboardId}`,
         name: "该片段的脚本",
         objectType: "text",
+        unseenUpdateAt: null,
         selection: { kind: "script", storyboardId },
       },
     ]),
@@ -113,6 +114,20 @@ export function findObject(nodes: WorkspaceTreeNode[], objectId: string): Worksp
   return null;
 }
 
+export function findObjectForSelection(
+  nodes: WorkspaceTreeNode[],
+  selection: WorkspaceSelection,
+): WorkspaceObjectNode | null {
+  for (const node of nodes) {
+    if (node.kind === "object" && selectionMatches(node.selection, selection)) return node;
+    if (node.kind === "folder") {
+      const nested = findObjectForSelection(node.children, selection);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
 export function findTreeNode(nodes: WorkspaceTreeNode[], id: string): WorkspaceTreeNode | null {
   for (const node of nodes) {
     if (node.id === id) return node;
@@ -130,9 +145,66 @@ export function renameTreeNode(nodes: WorkspaceTreeNode[], id: string, name: str
     : node.kind === "folder" ? { ...node, children: renameTreeNode(node.children, id, name) } : node);
 }
 
+export function updateNodeUnseenUpdateAt(
+  nodes: WorkspaceTreeNode[],
+  id: string,
+  unseenUpdateAt: string | null,
+): WorkspaceTreeNode[] {
+  return nodes.map((node): WorkspaceTreeNode => {
+    if (node.kind === "object" && node.id === id) return { ...node, unseenUpdateAt };
+    if (node.kind !== "folder") return node;
+    const children = updateNodeUnseenUpdateAt(node.children, id, unseenUpdateAt);
+    return children.some((child, index) => child !== node.children[index])
+      ? { ...node, children }
+      : node;
+  });
+}
+
 export function removeTreeNode(nodes: WorkspaceTreeNode[], id: string): WorkspaceTreeNode[] {
   return nodes.filter((node) => node.id !== id).map((node) => node.kind === "folder"
     ? { ...node, children: removeTreeNode(node.children, id) } : node);
+}
+
+export function moveTreeNode(
+  nodes: WorkspaceTreeNode[],
+  sourceId: string,
+  parentId: string | null,
+): WorkspaceTreeNode[] {
+  const source = findTreeNode(nodes, sourceId);
+  if (!source) throw new Error("资源不存在，请刷新后重试。");
+  if (parentId !== null) {
+    const chain = folderChain(nodes, parentId);
+    if (!chain) throw new Error("目标文件夹不存在，请刷新后重试。");
+    if (chain.some((folder) => folder.id === sourceId)) {
+      throw new Error("不能将文件夹移入自身或其子文件夹。");
+    }
+  }
+  return appendTreeNode(removeTreeNode(nodes, sourceId), parentId, source);
+}
+
+export function reorderTreeNode(
+  nodes: WorkspaceTreeNode[],
+  sourceId: string,
+  targetId: string,
+  placement: "before" | "after",
+): WorkspaceTreeNode[] {
+  const source = findTreeNode(nodes, sourceId);
+  if (!source || sourceId === targetId) throw new Error("资源不存在或目标位置无效，请刷新后重试。");
+  const remaining = removeTreeNode(nodes, sourceId);
+  if (!findTreeNode(remaining, targetId)) {
+    throw new Error("不能将文件夹移入自身或其子文件夹。");
+  }
+  const insert = (siblings: WorkspaceTreeNode[]): WorkspaceTreeNode[] => {
+    const index = siblings.findIndex((node) => node.id === targetId);
+    if (index >= 0) {
+      const next = [...siblings];
+      next.splice(index + (placement === "after" ? 1 : 0), 0, source);
+      return next;
+    }
+    return siblings.map((node) => node.kind === "folder"
+      ? { ...node, children: insert(node.children) } : node);
+  };
+  return insert(remaining);
 }
 
 export function nodeContainsSelection(node: WorkspaceTreeNode, selection: WorkspaceSelection): boolean {
@@ -191,6 +263,7 @@ function objectFromNavigator(item: NavigatorGroup["items"][number]): WorkspaceOb
     id: item.id,
     name: item.navigationName ?? item.name,
     objectType: item.media.kind,
+    unseenUpdateAt: null,
     selection: { kind: "item", itemId: item.id },
   };
 }

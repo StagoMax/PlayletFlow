@@ -1,40 +1,50 @@
 :root {
   color-scheme: dark;
   font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
-  color: #eef1f8;
-  background: #080a10;
+  color: #f2f2f3;
+  background: #0d0d0e;
   font-synthesis: none;
 
-  /* Existing workspace colors are the source for the shared UI language. */
-  --bg: #080a10;
-  --panel: #0e111a;
-  --panel-raised: #151925;
-  --panel-soft: #111520;
-  --line: #252a39;
-  --line-strong: #363d50;
-  --line-subtle: rgba(255, 255, 255, .08);
+  /* Neutral workspace surfaces; media and status colors retain their own meaning. */
+  --bg: #0d0d0e;
+  --panel: #19191a;
+  --panel-raised: #252527;
+  --panel-soft: #202022;
+  --line: #303033;
+  --line-strong: #3b3b3f;
+  --line-subtle: rgba(255, 255, 255, .07);
   --border: var(--line-strong);
-  --text: #eef1f8;
-  --text-secondary: #abb3c6;
-  --text-muted: #8590a5;
-  --scrollbar-thumb: #555e74;
-  --scrollbar-thumb-hover: #737f99;
-  --accent: #8293ff;
-  --accent-strong: #9d79ff;
-  --accent-soft: rgba(130, 147, 255, .14);
-  --positive: #77d6b2;
-  --warning: #f4bd62;
-  --danger: #ff8f9a;
+  --text: #f2f2f3;
+  --text-secondary: #b7b7bc;
+  --text-muted: #8c8c93;
+  --scrollbar-thumb: #4a4a4d;
+  --scrollbar-thumb-hover: #69696e;
+  --accent: #1b9ff1;
+  --accent-strong: #68c2fb;
+  --accent-soft: rgba(27, 159, 241, .13);
+  --accent-hover: rgba(27, 159, 241, .19);
+  --accent-action: #214a66;
+  --accent-action-hover: #2c5d80;
+  --positive: #87d1aa;
+  --positive-soft: rgba(135, 209, 170, .12);
+  --warning: #e7bf79;
+  --warning-soft: rgba(231, 191, 121, .12);
+  --danger: #f0969d;
+  --danger-soft: rgba(240, 150, 157, .12);
 
-  --surface-overlay: #171c26;
-  --surface-input: #11151f;
-  --surface-control: #242a38;
-  --surface-control-hover: #2c3445;
-  --surface-input-hover: #151a25;
-  --action-primary: #aeb7ff;
-  --action-primary-hover: #c3caff;
-  --text-on-primary: #10131c;
-  --focus-ring: #aeb8ff;
+  --surface-overlay: #242426;
+  --surface-input: #141415;
+  --surface-control: #29292b;
+  --surface-control-hover: #323235;
+  --surface-input-hover: #1b1b1d;
+  --surface-canvas: #0d0d0e;
+  --surface-media: #101012;
+  --surface-composer: #141415;
+  --surface-composer-focus: #1b1b1d;
+  --action-primary: #f0f0f1;
+  --action-primary-hover: #ffffff;
+  --text-on-primary: #19191b;
+  --focus-ring: #68c2fb;
 
   --space-1: 4px;
   --space-2: 8px;
@@ -43,21 +53,23 @@
   --space-6: 24px;
   --space-8: 32px;
 
-  --radius-sm: 6px;
-  --radius-md: 8px;
+  --radius-sm: 7px;
+  --radius-md: 9px;
   --radius-lg: 12px;
-  --radius-xl: 14px;
+  --radius-xl: 16px;
 
   --font-size-caption: 12px;
   --font-size-label: 13px;
   --font-size-body: 14px;
   --font-size-dialog-title: 18px;
-  --font-size-page-title: 22px;
+  --font-size-page-title: 24px;
   --line-height-body: 1.5;
 
   --control-height: 40px;
+  --workspace-header-height: 64px;
   --motion-fast: 160ms;
   --motion-standard: 220ms;
-  --shadow-control: 0 1px 3px rgba(0, 0, 0, .16);
-  --shadow-overlay: 0 18px 48px rgba(0, 0, 0, .38);
+  --shadow-control: 0 2px 8px rgba(0, 0, 0, .16);
+  --shadow-surface: 0 10px 32px rgba(0, 0, 0, .22);
+  --shadow-overlay: 0 18px 48px rgba(0, 0, 0, .42);
 }

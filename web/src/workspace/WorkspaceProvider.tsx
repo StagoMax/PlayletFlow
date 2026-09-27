@@ -4,7 +4,6 @@ import type {
   GenerationJob,
   GenerationOptions,
   MediaItem,
-  StoryboardScript,
 } from "../productApi/generated";
 import type {
   NavigatorGroup,
@@ -16,6 +15,7 @@ import type {
 } from "./types";
 import { appendTreeNode, findTreeNode, mediaBackedObjectIds, nodeContainsSelection } from "./resourceTree";
 import { workspaceObjectMediaClient } from "./workspaceObjectMediaClient";
+import { useObjectMediaPolling } from "./useObjectMediaPolling";
 import { withStoryboardOrder, withoutStoryboard } from "./storyboardOrder";
 import type { WorkspaceClient } from "./workspaceClient";
 import type { WorkspaceGenerationJob } from "./workspaceClient";
@@ -32,48 +32,90 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
   const [data, setData] = useState(initialData);
   const [objectMedia, setObjectMedia] = useState<Record<string, MediaItem>>({});
   const publishObjectMedia = useCallback((objectId: string, media: MediaItem) => {
-    setObjectMedia((current) => current[objectId]?.revision > media.revision
-      ? current
-      : { ...current, [objectId]: media });
+    setObjectMedia((current) => {
+      const previous = current[objectId];
+      if (previous?.id === media.id && previous.revision > media.revision) return current;
+      if (previous && previous.id !== media.id && previous.status === "ready"
+        && (media.status === "processing" || media.status === "placeholder")) return current;
+      if (previous?.id === media.id && previous.revision === media.revision
+        && (previous.status === "ready" || previous.status === "failed")
+        && (media.status === "processing" || media.status === "placeholder")) return current;
+      if (previous?.id === media.id && previous.status === "processing"
+        && media.status === "placeholder" && previous.revision === media.revision) return current;
+      return { ...current, [objectId]: media };
+    });
   }, []);
+  const publishWorkspaceNodeMedia = useCallback((storyboardId: string, nodeId: string, media: MediaItem) => {
+    publishObjectMedia(nodeId, media);
+    setData((currentData) => {
+      const workspace = currentData.workspaces[storyboardId];
+      if (!workspace) return currentData;
+      let changed = false;
+      const updateGroups = (groups: NavigatorGroup[]) => groups.map((group) => ({
+        ...group,
+        items: group.items.map((item) => {
+          if (item.media.id !== media.id || item.media.revision > media.revision) return item;
+          changed = true;
+          return { ...item, media };
+        }),
+      }));
+      const assetGroups = updateGroups(workspace.assetGroups);
+      const videoGroups = updateGroups(workspace.videoGroups);
+      if (!changed) return currentData;
+      return {
+        ...currentData,
+        workspaces: {
+          ...currentData.workspaces,
+          [storyboardId]: { ...workspace, assetGroups, videoGroups },
+        },
+      };
+    });
+  }, [publishObjectMedia]);
   const [state, dispatch] = useReducer(workspaceReducer, data.initialStoryboardId, createWorkspaceState);
+  useObjectMediaPolling(
+    data.project.id,
+    state.currentStoryboardId,
+    data.workspaces[state.currentStoryboardId].navigationTree,
+    objectMedia,
+    publishObjectMedia,
+  );
   const generationPolls = useRef(new Map<string, AbortController>());
   useEffect(() => () => {
     generationPolls.current.forEach((controller) => controller.abort());
     generationPolls.current.clear();
   }, []);
+  const refreshNavigationTree = useCallback(async (storyboardId: string, signal?: AbortSignal) => {
+    const navigationTree = await client.loadNavigationTree(data.project.id, storyboardId, signal);
+    if (!navigationTree) return;
+    setData((currentData) => {
+      const workspace = currentData.workspaces[storyboardId];
+      if (!workspace) return currentData;
+      return {
+        ...currentData,
+        workspaces: {
+          ...currentData.workspaces,
+          [storyboardId]: { ...workspace, navigationTree },
+        },
+      };
+    });
+    for (const objectId of mediaBackedObjectIds(navigationTree)) {
+      void workspaceObjectMediaClient.get(data.project.id, objectId, signal)
+        .then((media) => { if (!signal?.aborted) publishObjectMedia(objectId, media); })
+        .catch((error: unknown) => {
+          if (!signal?.aborted) console.warn("无法加载对象缩略预览", error);
+        });
+    }
+  }, [client, data.project.id, publishObjectMedia]);
   useEffect(() => {
     const controller = new AbortController();
-    void client
-      .loadNavigationTree(data.project.id, state.currentStoryboardId, controller.signal)
-      .then((navigationTree) => {
-        if (!navigationTree) return;
-        setData((currentData) => {
-          const workspace = currentData.workspaces[state.currentStoryboardId];
-          if (!workspace) return currentData;
-          return {
-            ...currentData,
-            workspaces: {
-              ...currentData.workspaces,
-              [state.currentStoryboardId]: { ...workspace, navigationTree },
-            },
-          };
-        });
-        for (const objectId of mediaBackedObjectIds(navigationTree)) {
-          void workspaceObjectMediaClient.get(data.project.id, objectId, controller.signal)
-            .then((media) => { if (!controller.signal.aborted) publishObjectMedia(objectId, media); })
-            .catch((error: unknown) => {
-              if (!controller.signal.aborted) console.warn("无法加载对象缩略预览", error);
-            });
-        }
-      })
+    void refreshNavigationTree(state.currentStoryboardId, controller.signal)
       .catch((error: unknown) => {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
           console.error("无法同步工作区资源树", error);
         }
       });
     return () => controller.abort();
-  }, [client, data.project.id, publishObjectMedia, state.currentStoryboardId]);
+  }, [refreshNavigationTree, state.currentStoryboardId]);
   const refreshScript = useCallback(async (storyboardId: string, signal?: AbortSignal) => {
     const script = await client.loadScript(data.project.id, storyboardId, signal);
     if (!script) return null;
@@ -194,6 +236,20 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
     const tree = await client.copyNode(data.project.id, state.currentStoryboardId, nodeId);
     updateNavigationTree(state.currentStoryboardId, tree);
   }, [client, data.project.id, state.currentStoryboardId, updateNavigationTree]);
+  const reorderNode = useCallback(async (nodeId: string, targetId: string, placement: "before" | "after") => {
+    const storyboardId = state.currentStoryboardId;
+    const tree = await client.reorderNode(data.project.id, storyboardId, nodeId, targetId, placement);
+    updateNavigationTree(storyboardId, tree);
+  }, [client, data.project.id, state.currentStoryboardId, updateNavigationTree]);
+  const moveNode = useCallback(async (nodeId: string, parentId: string | null) => {
+    const storyboardId = state.currentStoryboardId;
+    const tree = await client.moveNode(data.project.id, storyboardId, nodeId, parentId);
+    updateNavigationTree(storyboardId, tree);
+  }, [client, data.project.id, state.currentStoryboardId, updateNavigationTree]);
+  const markObjectViewed = useCallback(async (storyboardId: string, nodeId: string, seenThrough: string) => {
+    const tree = await client.markObjectViewed(data.project.id, storyboardId, nodeId, seenThrough);
+    updateNavigationTree(storyboardId, tree);
+  }, [client, data.project.id, updateNavigationTree]);
   const createStoryboard = useCallback(async (input: {
     name: string;
     sourceStoryboardId: string;
@@ -328,13 +384,22 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
     expectedRevision: number,
     generation: GenerationOptions,
     idempotencyKey: string,
+    imageFiles?: readonly import("../generation/generationOptions").GenerationImageFile[],
   ) => {
+    const workspace = data.workspaces[storyboardId];
+    const objectIds = new Set(workspace ? mediaBackedObjectIds(workspace.navigationTree) : []);
+    const referenceMedia = Object.entries(objectMedia)
+      .filter(([objectId]) => objectIds.has(objectId))
+      .map(([, media]) => media);
     const job = await client.requestMediaGeneration(
       data.project.id,
       storyboardId,
       mediaId,
       { prompt, expectedRevision, generation },
       idempotencyKey,
+      undefined,
+      imageFiles,
+      referenceMedia,
     );
     setData((currentData) => updateMediaFromGeneration(
       currentData,
@@ -346,13 +411,14 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
     ));
     monitorGeneration(storyboardId, itemId, mediaId, job);
     return job;
-  }, [client, data.project.id, monitorGeneration]);
+  }, [client, data.project.id, data.workspaces, monitorGeneration, objectMedia]);
   const value = useMemo(() => ({
     data,
     state,
     current: data.workspaces[state.currentStoryboardId],
     objectMedia,
     publishObjectMedia,
+    publishWorkspaceNodeMedia,
     dispatch,
     createStoryboard,
     duplicateStoryboard,
@@ -360,6 +426,7 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
     deleteStoryboard,
     reorderStoryboard,
     commitAppliedProposal,
+    refreshNavigationTree,
     refreshScript,
     saveScript,
     createFolder,
@@ -367,9 +434,12 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
     renameNode,
     deleteNode,
     copyNode,
+    reorderNode,
+    moveNode,
+    markObjectViewed,
     loadGenerationModels,
     generateMedia,
-  }), [commitAppliedProposal, createFolder, createObject, renameNode, deleteNode, copyNode, createStoryboard, duplicateStoryboard, renameStoryboard, deleteStoryboard, reorderStoryboard, data, generateMedia, loadGenerationModels, objectMedia, publishObjectMedia, refreshScript, saveScript, state]);
+  }), [commitAppliedProposal, createFolder, createObject, renameNode, deleteNode, copyNode, reorderNode, moveNode, markObjectViewed, createStoryboard, duplicateStoryboard, renameStoryboard, deleteStoryboard, reorderStoryboard, data, generateMedia, loadGenerationModels, objectMedia, publishObjectMedia, publishWorkspaceNodeMedia, refreshNavigationTree, refreshScript, saveScript, state]);
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }
 
