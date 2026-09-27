@@ -221,6 +221,70 @@ async fn duplicate_preserves_storyboard_content_and_reorder_persists() {
 }
 
 #[tokio::test]
+async fn deleted_storyboard_positions_do_not_block_duplicate_or_restore() {
+    let app = TestApp::new();
+    let project = app.create_project("Film", "tombstone-project-key").await;
+    let project_id = project["id"].as_str().unwrap();
+    let (_, window) = app
+        .send(
+            "GET",
+            &format!("/api/v1/projects/{project_id}/storyboards"),
+            None,
+            None,
+        )
+        .await;
+    let source_id = window.unwrap()["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let duplicate_path = format!("/api/v1/projects/{project_id}/storyboards/{source_id}/duplicate");
+
+    let (status, first) = app
+        .send("POST", &duplicate_path, None, Some("tombstone-copy-first"))
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let first_id = first.unwrap()["id"].as_str().unwrap().to_owned();
+    let (status, _) = app
+        .send(
+            "DELETE",
+            &format!("/api/v1/projects/{project_id}/storyboards/{first_id}?expectedRevision=1"),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // The deleted copy still occupies the next database position.
+    let (status, second) = app
+        .send("POST", &duplicate_path, None, Some("tombstone-copy-second"))
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let second_id = second.unwrap()["id"].as_str().unwrap().to_owned();
+    let (status, _) = app
+        .send(
+            "DELETE",
+            &format!("/api/v1/projects/{project_id}/storyboards/{second_id}?expectedRevision=1"),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Restoring one tombstone must also move its own old position aside while
+    // the other tombstone is rebalanced.
+    let (status, restored) = app
+        .send(
+            "POST",
+            &format!("/api/v1/projects/{project_id}/storyboards/{first_id}/restore"),
+            None,
+            Some("tombstone-restore-first"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(restored.unwrap()["id"], first_id);
+}
+
+#[tokio::test]
 async fn project_storyboard_and_script_routes_follow_the_contract() {
     let app = TestApp::new();
     let project = app.create_project("Film", "project-contract-key").await;

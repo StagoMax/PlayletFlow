@@ -166,6 +166,7 @@ pub(super) fn rebalance_positions(
     excluded_id: Option<StoryboardId>,
 ) -> ProductResult<()> {
     let ordered = ordered_positions_excluding(transaction, project_id, excluded_id)?;
+    let active_count = ordered.len();
     let mut deleted = {
         let sql = if excluded_id.is_some() {
             "SELECT id FROM storyboards
@@ -197,11 +198,23 @@ pub(super) fn rebalance_positions(
             params![format!("tmp-{id}"), id.to_string()],
         )?;
     }
+    // A restored storyboard still occupies its old position until this
+    // allocation completes. Move it out of the way during the rebalance too.
+    if let Some(id) = excluded_id {
+        transaction.execute(
+            "UPDATE storyboards SET position = ?1 WHERE id = ?2 AND project_id = ?3",
+            params![format!("tmp-{id}"), id.to_string(), project_id.to_string()],
+        )?;
+    }
     let mut all_ids = ordered.iter().map(|(id, _)| *id).collect::<Vec<_>>();
     all_ids.append(&mut deleted);
     for (index, id) in all_ids.iter().enumerate() {
+        // Keep one position free after the active storyboards. Otherwise a
+        // tombstone immediately after the last active item blocks the very
+        // insertion that caused this rebalance.
+        let slot = index as u64 + if index < active_count { 1 } else { 2 };
         let position = POSITION_STEP
-            .checked_mul(index as u64 + 1)
+            .checked_mul(slot)
             .ok_or_else(|| ProductError::Storage("storyboard position overflow".to_owned()))?;
         transaction.execute(
             "UPDATE storyboards SET position = ?1 WHERE id = ?2",
