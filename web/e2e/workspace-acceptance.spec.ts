@@ -623,6 +623,34 @@ test("媒体信息位于顶部右侧，提示词编辑器固定在预览区底�
   await expect(workspace.getByRole("group", { name: "图片缩放控制" })).toHaveCount(0);
 });
 
+test("点击视频预览收起提示词，底部按钮可以重新展开", async ({ page }) => {
+  await page.goto("/?fixture=ready");
+  await page.getByRole("button", { name: /生成版本 03，/ }).click();
+
+  const workspace = page.locator(".media-preview-workspace");
+  const dock = workspace.locator(".media-prompt-dock");
+  const editor = dock.getByRole("form", { name: "视频生成提示词编辑器" });
+  const collapse = dock.getByRole("button", { name: "折叠提示词输入框" });
+  await expect(editor).toBeVisible();
+  await expect(collapse).toHaveAttribute("aria-expanded", "true");
+
+  await workspace.locator(".media-viewer").click({ position: { x: 100, y: 100 } });
+  await expect(dock).toHaveClass(/is-collapsed/);
+  await expect(dock.locator(".media-prompt-dock__content")).toHaveAttribute("inert", "");
+  const expand = dock.getByRole("button", { name: "展开提示词输入框" });
+  await expect(expand).toBeVisible();
+  await expect(expand).toHaveAttribute("aria-expanded", "false");
+  await expect.poll(async () => dock.evaluate((element) => {
+    const toggle = element.querySelector("button")!.getBoundingClientRect();
+    const workspaceBottom = element.parentElement!.getBoundingClientRect().bottom;
+    return Math.round(workspaceBottom - toggle.bottom);
+  })).toBeLessThanOrEqual(12);
+
+  await expand.click();
+  await expect(dock).not.toHaveClass(/is-collapsed/);
+  await expect(editor).toBeVisible();
+});
+
 test("媒体占满中心内容区域，提示词编辑器悬浮在底部", async ({ page }) => {
   await page.goto("/?fixture=ready");
   await page.getByRole("button", { name: /林舟 · 面部三视图，/ }).click();
