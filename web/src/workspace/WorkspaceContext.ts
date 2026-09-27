@@ -8,6 +8,7 @@ import type {
   StoryboardScript,
 } from "../productApi/generated";
 import type { GenerationImageFile } from "../generation/generationOptions";
+import type { WorkspaceGenerationJob } from "./workspaceClient";
 import type {
   StoryboardWorkspace,
   WorkspaceAction,
@@ -52,6 +53,11 @@ export type WorkspaceContextValue = {
   moveNode: (nodeId: string, parentId: string | null) => Promise<void>;
   markObjectViewed: (storyboardId: string, nodeId: string, seenThrough: string) => Promise<void>;
   loadGenerationModels: (signal?: AbortSignal) => Promise<GenerationModel[]>;
+  loadGenerationJob: (
+    mediaId: string,
+    jobId?: string | null,
+    signal?: AbortSignal,
+  ) => Promise<WorkspaceGenerationJob | null>;
   generateMedia: (
     storyboardId: string,
     itemId: string,

@@ -24,12 +24,17 @@ export function loadMediaPromptDraft(key: string | undefined, initialPrompt: str
   }
 }
 
-export function saveMediaPromptDraft(key: string | undefined, initialPrompt: string, draft: MediaPromptDraft) {
+export function saveMediaPromptDraft(
+  key: string | undefined,
+  initialPrompt: string,
+  draft: MediaPromptDraft,
+  baseDraft = parseMediaPromptDraft(initialPrompt),
+) {
   if (!key) return;
   const target = storage();
   if (!target) return;
   try {
-    if (sameMediaPromptDraft(draft, parseMediaPromptDraft(initialPrompt))) {
+    if (sameMediaPromptDraft(draft, baseDraft)) {
       target.removeItem(storagePrefix + key);
     } else {
       target.setItem(storagePrefix + key, JSON.stringify({ basePrompt: initialPrompt, draft } satisfies StoredDraft));

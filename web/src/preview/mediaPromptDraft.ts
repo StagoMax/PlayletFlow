@@ -1,4 +1,6 @@
-import type { ComposerAssetKind } from "../composer/types";
+import { inlineReferenceSegments } from "../composer/inlineReferences";
+import type { ComposerAssetKind, ComposerAssetReference } from "../composer/types";
+import type { GenerationInputSelection } from "../productApi/generated";
 
 export type SavedPromptReference = { id: string; name: string; kind: ComposerAssetKind };
 export type MediaPromptDraft = { text: string; references: SavedPromptReference[] };
@@ -82,6 +84,53 @@ export function reconcileMediaPromptReferences(
     return { ...reference, id: matches[0].id };
   });
   return changed ? next : references as SavedPromptReference[];
+}
+
+// Legacy AI prompts sometimes contain only @name text. Resolve unique names
+// against the visible storyboard assets so those prompts render as references
+// before the next save persists their IDs.
+export function inferMediaPromptReferences(
+  text: string,
+  assets: readonly ComposerAssetReference[],
+): ComposerAssetReference[] {
+  const variants = assets.flatMap((asset) =>
+    [...new Set([asset.name, ...(asset.aliases ?? [])])].map((name) => ({ ...asset, name })));
+  const nameCounts = new Map<string, number>();
+  variants.forEach((asset) => nameCounts.set(asset.name, (nameCounts.get(asset.name) ?? 0) + 1));
+  const unambiguous = variants.filter((asset) => nameCounts.get(asset.name) === 1);
+  const seen = new Set<string>();
+  return inlineReferenceSegments(text, unambiguous).flatMap((segment) => {
+    if (segment.type !== "reference" || seen.has(segment.reference.id)) return [];
+    seen.add(segment.reference.id);
+    return [segment.reference];
+  });
+}
+
+// Older tool proposals stored the generation input separately from the prompt.
+// Recover those stable IDs from the matching generation job when no reference
+// footer was saved, so the editor can display and resubmit the actual sources.
+export function restoreGenerationInputReferences(
+  prompt: string,
+  input: GenerationInputSelection | null,
+  assets: readonly ComposerAssetReference[],
+): MediaPromptDraft {
+  const draft = parseMediaPromptDraft(prompt);
+  if (!input || input.type === "textOnly") return draft;
+  const ids = input.type === "referenceImages"
+    ? input.mediaIds
+    : [input.firstFrameMediaId, input.lastFrameMediaId].filter((id): id is string => Boolean(id));
+  const byMediaId = new Map(assets.flatMap((asset) =>
+    asset.kind === "image" && asset.mediaId ? [[asset.mediaId, asset] as const] : []));
+  let text = draft.text;
+  const references: SavedPromptReference[] = [...draft.references];
+  for (const id of new Set(ids)) {
+    const asset = byMediaId.get(id);
+    if (!asset || references.some((reference) => reference.id === asset.id)) continue;
+    const name = [asset.name, ...(asset.aliases ?? [])].find((candidate) => text.includes(`@${candidate}`)) ?? asset.name;
+    if (!text.includes(`@${name}`)) text += `${text ? " " : ""}@${name}`;
+    references.push({ id: asset.id, name, kind: "image" });
+  }
+  return { text, references };
 }
 
 function sameSavedReferences(a: readonly SavedPromptReference[], b: readonly SavedPromptReference[]) {

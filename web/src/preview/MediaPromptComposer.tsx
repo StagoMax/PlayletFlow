@@ -11,9 +11,9 @@ import { useAssetMention } from "../composer/useAssetMention";
 import { useComposerAttachments } from "../composer/useComposerAttachments";
 import { GenerationControls, GenerationImageSizeControl, type GenerationMediaOption, type GenerationModelLoader } from "../generation/GenerationControls";
 import { createDefaultGenerationOptions, imageGenerationInput, type GenerationImageFile } from "../generation/generationOptions";
-import type { GenerationJob, GenerationOptions, MediaKind } from "../productApi/generated";
+import type { GenerationInputSelection, GenerationJob, GenerationOptions, MediaKind } from "../productApi/generated";
 import type { FormEvent, KeyboardEvent } from "react";
-import { parseMediaPromptDraft, reconcileMediaPromptReferences, sameMediaPromptDraft, synchronizeMediaPromptDraft } from "./mediaPromptDraft";
+import { inferMediaPromptReferences, parseMediaPromptDraft, reconcileMediaPromptReferences, restoreGenerationInputReferences, sameMediaPromptDraft } from "./mediaPromptDraft";
 import { loadMediaPromptDraft, saveMediaPromptDraft } from "./mediaPromptDraftStore";
 import "./videoPromptComposer.css";
 
@@ -23,8 +23,9 @@ export type MediaSubmissionState =
   | { status: "success"; message: string }
   | { status: "error"; message: string };
 
-type MediaPromptComposerProps = {
+export type MediaPromptComposerProps = {
   initialPrompt: string;
+  initialGenerationInput?: GenerationInputSelection | null;
   draftKey?: string;
   kind: MediaKind;
   media: GenerationMediaOption[];
@@ -50,6 +51,7 @@ export function synchronizePromptDraft(
 
 export function MediaPromptComposer({
   initialPrompt,
+  initialGenerationInput = null,
   draftKey,
   kind,
   media,
@@ -62,14 +64,18 @@ export function MediaPromptComposer({
   const inputId = useId();
   const editorRef = useRef<HTMLDivElement>(null);
   const idempotencyKey = useRef<string | null>(null);
-  const previousInitialPrompt = useRef(initialPrompt);
   const [draft, setDraft] = useState(() => loadMediaPromptDraft(draftKey, initialPrompt));
+  const initialDraft = useMemo(() => restoreGenerationInputReferences(initialPrompt, initialGenerationInput, assets),
+    [assets, initialGenerationInput, initialPrompt]);
+  const previousInitialDraft = useRef(initialDraft);
   useEffect(() => {
-    const previous = previousInitialPrompt.current;
-    previousInitialPrompt.current = initialPrompt;
-    setDraft((current) => synchronizeMediaPromptDraft(current, previous, initialPrompt));
-  }, [initialPrompt]);
-  useEffect(() => saveMediaPromptDraft(draftKey, initialPrompt, draft), [draft, draftKey, initialPrompt]);
+    const previous = previousInitialDraft.current;
+    if (sameMediaPromptDraft(previous, initialDraft)) return;
+    previousInitialDraft.current = initialDraft;
+    setDraft((current) => sameMediaPromptDraft(current, previous) ? initialDraft : current);
+  }, [initialDraft]);
+  useEffect(() => saveMediaPromptDraft(draftKey, initialPrompt, draft, initialDraft),
+    [draft, draftKey, initialDraft, initialPrompt]);
   const prompt = draft.text;
   const savedReferences = useMemo(() => reconcileMediaPromptReferences(draft.references, assets), [assets, draft.references]);
   useEffect(() => {
@@ -79,7 +85,7 @@ export function MediaPromptComposer({
       return next === current.references ? current : { ...current, references: next };
     });
   }, [assets, draft.references, savedReferences]);
-  const references = useMemo(() => {
+  const resolvedSavedReferences = useMemo(() => {
     const byId = new Map(assets.map((asset) => [asset.id, asset]));
     return savedReferences.flatMap((saved) => {
       const asset = byId.get(saved.id);
@@ -88,8 +94,22 @@ export function MediaPromptComposer({
         : [];
     });
   }, [assets, savedReferences]);
-  const missingReferences = savedReferences.length !== references.length;
+  const references = useMemo(() => {
+    const seen = new Set(resolvedSavedReferences.map((reference) => reference.id));
+    return [
+      ...resolvedSavedReferences,
+      ...inferMediaPromptReferences(prompt, assets).filter((reference) => !seen.has(reference.id)),
+    ];
+  }, [assets, prompt, resolvedSavedReferences]);
+  const missingReferences = savedReferences.length !== resolvedSavedReferences.length;
   const [generation, setGeneration] = useState(() => createDefaultGenerationOptions(kind));
+  const [useLatestInput, setUseLatestInput] = useState(false);
+  const generationInputEdited = useRef(false);
+  useEffect(() => {
+    if (!initialGenerationInput || generationInputEdited.current) return;
+    setGeneration((current) => ({ ...current, input: initialGenerationInput }));
+    setUseLatestInput(true);
+  }, [initialGenerationInput]);
   const [submission, setSubmission] = useState<MediaSubmissionState>({ status: "idle" });
   const [undoing, setUndoing] = useState(false);
   const [canUndoLocalEdit, setCanUndoLocalEdit] = useState(false);
@@ -101,13 +121,12 @@ export function MediaPromptComposer({
     segment.type === "reference" && segment.reference.kind === "image" && segment.reference.mediaId
       ? [segment.reference.mediaId]
       : []))];
-  const currentGeneration: GenerationOptions = kind === "video" && generation.input?.type !== "firstLastFrames"
+  const currentGeneration: GenerationOptions = kind === "video" && !useLatestInput && generation.input?.type !== "firstLastFrames"
     ? { ...generation, input: referencedImageIds.length > 0
       ? { type: "referenceImages", mediaIds: referencedImageIds }
       : { type: "textOnly" } }
     : generation;
   const canSubmit = prompt.trim().length > 0 && !missingReferences && !isSubmitting;
-  const initialDraft = useMemo(() => parseMediaPromptDraft(initialPrompt), [initialPrompt]);
   const selectedMediaIds = currentGeneration.input?.type === "referenceImages"
     ? currentGeneration.input.mediaIds
     : currentGeneration.input?.type === "firstLastFrames"
@@ -130,6 +149,8 @@ export function MediaPromptComposer({
       resetIntent();
     },
     onReference: (asset) => {
+      generationInputEdited.current = true;
+      setUseLatestInput(false);
       setDraft((current) => current.references.some((item) => item.id === asset.id)
         ? current
         : { ...current, references: [...current.references, { id: asset.id, name: asset.name, kind: asset.kind }] });
@@ -143,7 +164,8 @@ export function MediaPromptComposer({
   }
 
   function removeGenerationMedia(mediaIdsToRemove: readonly string[]) {
-    if (kind !== "video" || mediaIdsToRemove.length === 0) return;
+    if (mediaIdsToRemove.length === 0) return;
+    generationInputEdited.current = true;
     setGeneration((current) => {
       if (current.input?.type === "firstLastFrames") {
         if (mediaIdsToRemove.includes(current.input.firstFrameMediaId)) {
@@ -152,6 +174,12 @@ export function MediaPromptComposer({
         if (current.input.lastFrameMediaId && mediaIdsToRemove.includes(current.input.lastFrameMediaId)) {
           return { ...current, input: { ...current.input, lastFrameMediaId: null } };
         }
+      }
+      if (current.input?.type === "referenceImages") {
+        const mediaIds = current.input.mediaIds.filter((id) => !mediaIdsToRemove.includes(id));
+        return { ...current, input: mediaIds.length > 0
+          ? { type: "referenceImages", mediaIds }
+          : { type: "textOnly" } };
       }
       return current;
     });
@@ -162,6 +190,14 @@ export function MediaPromptComposer({
     removedReferenceId?: string,
     restoredReferences?: readonly ComposerAssetReference[],
   ) {
+    const previousImageIds = referencedImageIds;
+    const nextImageIds = [...new Set(inlineReferenceSegments(nextPrompt, references).flatMap((segment) =>
+      segment.type === "reference" && segment.reference.kind === "image" && segment.reference.mediaId
+        ? [segment.reference.mediaId] : []))];
+    if (previousImageIds.join("\u0000") !== nextImageIds.join("\u0000")) {
+      generationInputEdited.current = true;
+      setUseLatestInput(false);
+    }
     const removedMediaIds = references
       .filter((reference) => reference.id === removedReferenceId || !nextPrompt.includes(referenceMarker(reference)))
       .flatMap((reference) => reference.mediaId ? [reference.mediaId] : []);
@@ -194,12 +230,14 @@ export function MediaPromptComposer({
     let nextGeneration = currentGeneration;
     if (kind === "image") {
       try {
-        const referencedImages = references.filter((item) => item.kind === "image");
-        if (referencedImages.some((item) => !item.mediaId || !media.some((option) => option.id === item.mediaId))) {
+        const selectedImageIds = useLatestInput && generation.input?.type === "referenceImages"
+          ? generation.input.mediaIds
+          : references.filter((item) => item.kind === "image").map((item) => item.mediaId);
+        if (selectedImageIds.some((id) => !id || !media.some((option) => option.id === id))) {
           throw new Error("引用的图片尚未就绪，请选择可用图片。");
         }
         const input = imageGenerationInput(
-          referencedImages.map((item) => item.mediaId!),
+          selectedImageIds as string[],
           imageFiles,
         );
         nextGeneration = { ...generation, input };
@@ -295,6 +333,7 @@ export function MediaPromptComposer({
         disabled={isSubmitting}
         onRemoveReference={removeReference}
         onRemoveSelectedMedia={(mediaId) => {
+          generationInputEdited.current = true;
           removeGenerationMedia([mediaId]);
           resetIntent();
         }}
@@ -336,6 +375,7 @@ export function MediaPromptComposer({
           <GenerationImageSizeControl
             value={currentGeneration}
             onChange={(next) => {
+              if (JSON.stringify(next.input) !== JSON.stringify(currentGeneration.input)) generationInputEdited.current = true;
               setGeneration(next);
               resetIntent();
             }}
@@ -358,7 +398,11 @@ export function MediaPromptComposer({
         )}
         controls={kind === "image" ? (
           <GenerationControls compact loadModels={loadModels} kind={kind} media={media}
-            value={generation} onChange={(next) => { setGeneration(next); resetIntent(); }}
+            value={generation} onChange={(next) => {
+              if (JSON.stringify(next.input) !== JSON.stringify(generation.input)) generationInputEdited.current = true;
+              setGeneration(next);
+              resetIntent();
+            }}
             disabled={isSubmitting} />
         ) : undefined}
         action={{

@@ -5,6 +5,7 @@ import type { WorkspaceSelection } from "../workspace/types";
 export type ComposerAssetKind = "image" | "video" | "text";
 
 export type ComposerAssetReference = WorkspaceReference & {
+  aliases?: string[];
   mediaId?: string;
   thumbnailUrl?: string;
   durationMs?: number | null;

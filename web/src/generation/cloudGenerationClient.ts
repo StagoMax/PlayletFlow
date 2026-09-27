@@ -8,6 +8,7 @@ import type {
 import type { WorkspaceGenerationJob } from "../workspace/workspaceClient";
 import type { GenerationImageFile } from "./generationOptions";
 import { blobBase64, fitGenerationImageBlob, prepareImageBlob } from "./imageInput";
+import { generationErrorMessage } from "./generationError";
 
 export type InputPayload = {
   mediaId: string;
@@ -112,14 +113,7 @@ async function supportedImageBlob(url: string, declaredType: string, signal?: Ab
 async function http<T>(url: string, init: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (response.ok) return response.json() as Promise<T>;
-  let message = `${response.status} ${response.statusText}`;
-  try {
-    const body = await response.json() as { error?: string };
-    if (body.error) message = body.error;
-  } catch {
-    // Retain the HTTP status when the body is not JSON.
-  }
-  throw new Error(message);
+  throw new Error(await generationErrorMessage(response));
 }
 
 function segment(value: string) {

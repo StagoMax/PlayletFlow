@@ -3,6 +3,7 @@ import type {
   ChangeProposal,
   GenerationModel,
   GenerationJob,
+  GenerationInputSelection,
   ProposalStatus,
   ResolveProposalRequest,
 } from "../productApi/generated";
@@ -50,6 +51,13 @@ export class ProposalApiError extends Error {
   }
 }
 
+export function confirmedProposalInput(
+  body: ResolveProposalRequest,
+  proposal: Pick<ChangeProposal, "proposedInput">,
+): GenerationInputSelection {
+  return body.generation?.input ?? proposal.proposedInput ?? { type: "textOnly" };
+}
+
 export function createProposalClient(baseUrl = "/api/v1"): ProposalClient {
   return {
     listGenerationModels: (signal) => request<GenerationModel[]>(`${baseUrl}/generation-models`, { signal }),
@@ -85,7 +93,7 @@ export function createProposalClient(baseUrl = "/api/v1"): ProposalClient {
             ...Object.values(snapshot.workspaces).flatMap((workspace) =>
               [...workspace.assetGroups, ...workspace.videoGroups].flatMap((group) => group.items.map((item) => item.media))),
           ];
-          const input = proposal.proposedInput ?? { type: "textOnly" as const };
+          const input = confirmedProposalInput(body, proposal);
           commandBody = { ...body, inputs: await inputPayloads({ ...body.generation, input }, availableMedia, [], signal) };
         }
       }

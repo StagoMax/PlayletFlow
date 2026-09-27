@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ChangeProposal } from "../productApi/generated";
-import type { ProposalClient } from "./proposalClient";
+import { confirmedProposalInput, type ProposalClient } from "./proposalClient";
 import { buildLineDiff } from "./diff";
 import { ProposalPanel } from "./ProposalPanel";
 import { ProposalTargetBoundary } from "./ProposalTargetBoundary";
@@ -33,6 +33,19 @@ const client: ProposalClient = {
 };
 
 export const proposalTestCases: Record<string, () => TestResult> = {
+  "cloud proposal uploads the images selected at confirmation"() {
+    const suggested = { proposedInput: { type: "referenceImages" as const, mediaIds: ["original"] } };
+    const selected = confirmedProposalInput({
+      expectedProposalRevision: 1, expectedTargetRevision: 1,
+      generation: { input: { type: "referenceImages", mediaIds: ["confirmed"] } },
+    }, suggested);
+    const fallback = confirmedProposalInput({
+      expectedProposalRevision: 1, expectedTargetRevision: 1,
+    }, suggested);
+    return { ok: selected.type === "referenceImages" && selected.mediaIds[0] === "confirmed"
+      && fallback.type === "referenceImages" && fallback.mediaIds[0] === "original",
+    message: "云端生成上传的图片必须与用户最终确认的生成输入一致。" };
+  },
   "line diff preserves unchanged context and marks replacements"() {
     const lines = buildLineDiff("第一行\n保留", "新的第一行\n保留");
     const ok = lines.some((line) => line.kind === "removed" && line.text === "第一行")

@@ -4,7 +4,7 @@ import { MediaMetadata } from "./MediaMetadata";
 import { MediaPromptComposer, synchronizePromptDraft } from "./MediaPromptComposer";
 import { composeSubmissionText } from "../composer/submission";
 import type { ComposerAssetReference } from "../composer/types";
-import { parseMediaPromptDraft, synchronizeMediaPromptDraft } from "./mediaPromptDraft";
+import { inferMediaPromptReferences, parseMediaPromptDraft, restoreGenerationInputReferences, synchronizeMediaPromptDraft } from "./mediaPromptDraft";
 import { imageGenerationInput } from "../generation/generationOptions";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { MediaViewer } from "./MediaViewer";
@@ -55,6 +55,33 @@ function item(overrides: Partial<MediaItem> = {}): PreviewItem {
 }
 
 export const previewTestCases: Record<string, () => TestResult> = {
+  "legacy generation jobs restore selected images into an otherwise plain prompt"() {
+    const asset = (id: string, name: string): ComposerAssetReference => ({
+      id, name, kind: "image", mediaId: id,
+      selection: { kind: "emptyObject", objectId: id, objectType: "image" },
+    });
+    const assets = [asset("field", "黄昏牧场"), asset("dog", "牧羊犬-多视图")];
+    const input = { type: "referenceImages" as const, mediaIds: ["field", "dog", "field"] };
+    const restored = restoreGenerationInputReferences("场景引用图1，角色引用图2。", input, assets);
+    const saved = composeSubmissionText(restored.text, assets, []);
+    const repeated = restoreGenerationInputReferences(saved, input, assets);
+    return check(restored.references.map((reference) => reference.id).join(",") === "field,dog"
+      && restored.text.includes("@黄昏牧场") && restored.text.includes("@牧羊犬-多视图")
+      && repeated.text === restored.text && repeated.references.length === 2,
+    "historical generation inputs should become visible, stable references without duplication");
+  },
+  "legacy tool mentions resolve to visible asset IDs only when names are unique"() {
+    const asset = (id: string, name: string): ComposerAssetReference => ({
+      id, name, kind: "image", mediaId: id,
+      selection: { kind: "emptyObject", objectId: id, objectType: "image" },
+    });
+    const assets = [{ ...asset("long", "牧羊犬-多视图"), aliases: ["牧羊犬设定图"] },
+      asset("short", "牧羊犬"),
+      asset("one", "同名"), asset("two", "同名")];
+    const inferred = inferMediaPromptReferences("参考 @牧羊犬设定图 和 @牧羊犬；不要猜 @同名", assets);
+    return check(inferred.map((reference) => reference.id).join(",") === "long,short",
+      "legacy @mentions should become editor references only for a unique current asset");
+  },
   "saved media prompts restore reference IDs without duplicating their footer"() {
     const reference: ComposerAssetReference = {
       id: "86bf4fd5-df01-466c-a535-1a5964248977",

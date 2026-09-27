@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { parseMediaPromptDraft, type SavedPromptReference } from "../preview/mediaPromptDraft";
 import { buildLineDiff } from "./diff";
 import "./proposals.css";
 
@@ -8,8 +9,11 @@ type ProposalDiffProps = {
 };
 
 export function ProposalDiff({ beforeValue, proposedValue }: ProposalDiffProps) {
-  const lines = useMemo(() => buildLineDiff(beforeValue, proposedValue), [beforeValue, proposedValue]);
-  const changed = lines.some((line) => line.kind !== "unchanged");
+  const before = useMemo(() => parseMediaPromptDraft(beforeValue), [beforeValue]);
+  const proposed = useMemo(() => parseMediaPromptDraft(proposedValue), [proposedValue]);
+  const lines = useMemo(() => buildLineDiff(before.text, proposed.text), [before.text, proposed.text]);
+  const referencesChanged = !sameReferences(before.references, proposed.references);
+  const changed = referencesChanged || lines.some((line) => line.kind !== "unchanged");
 
   return (
     <section className="proposal-diff" aria-label="正式内容与 AI 建议的差异">
@@ -30,6 +34,27 @@ export function ProposalDiff({ beforeValue, proposedValue }: ProposalDiffProps) 
           ))}
         </ol>
       )}
+      {before.references.length > 0 || proposed.references.length > 0 ? (
+        <div className="proposal-diff__references">
+          <strong>提示词引用资产</strong>
+          {before.references.length > 0 ? <ReferenceList label="当前" references={before.references} /> : null}
+          <ReferenceList label="AI 建议" references={proposed.references} />
+        </div>
+      ) : null}
     </section>
   );
+}
+
+function ReferenceList({ label, references }: { label: string; references: SavedPromptReference[] }) {
+  return <div className="proposal-diff__reference-row">
+    <span>{label}</span>
+    {references.length > 0 ? <ul>{references.map((reference) => <li key={reference.id}>
+      {reference.kind === "image" ? "图片" : reference.kind === "video" ? "视频" : "文本"} · {reference.name}
+    </li>)}</ul> : <span>无</span>}
+  </div>;
+}
+
+function sameReferences(a: SavedPromptReference[], b: SavedPromptReference[]) {
+  return a.length === b.length && a.every((reference, index) =>
+    reference.id === b[index].id && reference.kind === b[index].kind && reference.name === b[index].name);
 }

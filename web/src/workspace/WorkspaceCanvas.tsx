@@ -3,7 +3,7 @@ import { MediaMetadata } from "../preview/MediaMetadata";
 import { workspaceComposerAssets } from "../composer/workspaceAssets";
 import type { ApplyProposalResponse, ChangeProposal } from "../productApi/generated";
 import { ProposalActions, ProposalPanel, type ProposalClient } from "../proposals";
-import { MediaPromptComposer } from "../preview/MediaPromptComposer";
+import { WorkspaceMediaPromptComposer } from "./WorkspaceMediaPromptComposer";
 import { MediaPromptDock } from "../preview/MediaPromptDock";
 import { MediaViewer } from "../preview/MediaViewer";
 import { Icon } from "./Icons";
@@ -227,9 +227,13 @@ export function WorkspaceCanvas({
                 {item ? (
                   <MediaPromptDock collapsible={item.media.kind === "video"} collapsed={promptCollapsed}
                     onToggle={() => setCollapsedMediaId(promptCollapsed ? null : item.media.id)}>
-                    <MediaPromptComposer
+                    <WorkspaceMediaPromptComposer
                       key={item.id}
                       initialPrompt={item.media.prompt ?? ""}
+                      projectId={data.project.id}
+                      mediaId={item.media.id}
+                      targetRevision={item.media.revision}
+                      generationJobId={item.media.generation?.jobId}
                       draftKey={`${data.project.id}:${item.media.id}`}
                       kind={item.media.kind}
                       media={referenceMedia}

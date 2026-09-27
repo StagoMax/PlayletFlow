@@ -75,6 +75,7 @@ function mediaAsset(
     id: media.id,
     kind: media.kind,
     name,
+    aliases: media.name !== name ? [media.name] : undefined,
     mediaId: media.id,
     thumbnailUrl: media.thumbnail?.url,
     durationMs: media.durationMs,

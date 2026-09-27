@@ -39,7 +39,7 @@ async function refreshSignedMedia(projectId: string, media: MediaItem): Promise<
 export const browserObjectMediaClient = {
   async getLatestGenerationJob(projectId: string, mediaId: string, signal?: AbortSignal): Promise<WorkspaceGenerationJob | null> {
     const media = await requireMedia(projectId, mediaId);
-    return media.status === "processing" && media.generation?.jobId
+    return media.generation?.jobId
       ? cloud.get(projectId, media.generation.jobId, signal)
       : null;
   },

@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import type { GenerationJob } from "../productApi/generated";
-import { MediaPromptComposer, type MediaSubmissionState } from "../preview/MediaPromptComposer";
+import type { MediaSubmissionState } from "../preview/MediaPromptComposer";
 import { MediaPromptDock } from "../preview/MediaPromptDock";
 import { createCloudGenerationClient } from "../generation/cloudGenerationClient";
+import { generationErrorMessage } from "../generation/generationError";
 import { cloudGenerationMedia } from "../generation/cloudGenerationResult";
 import { uploadLocalGenerationInputs } from "../generation/localGenerationInputs";
 import { workspaceComposerAssets } from "../composer/workspaceAssets";
 import { ObjectMediaStage } from "./ObjectMediaStage";
 import { useWorkspace } from "./WorkspaceContext";
 import { workspaceObjectMediaClient } from "./workspaceObjectMediaClient";
+import { WorkspaceMediaPromptComposer } from "./WorkspaceMediaPromptComposer";
 import type { WorkspaceObjectNode } from "./types";
 
 const cloud = createCloudGenerationClient();
@@ -124,7 +126,9 @@ export function ObjectMediaWorkspace({ object, proposals }: { object: WorkspaceO
         {proposals}
         <MediaPromptDock collapsible={kind === "video"} collapsed={promptCollapsed}
           onToggle={() => setPromptCollapsed((value) => !value)}>
-          {media ? <MediaPromptComposer key={media.id} initialPrompt={media.prompt ?? ""} kind={kind}
+          {media ? <WorkspaceMediaPromptComposer key={media.id} initialPrompt={media.prompt ?? ""} kind={kind}
+            projectId={projectId} mediaId={media.id} targetRevision={media.revision}
+            generationJobId={media.generation?.jobId}
             draftKey={`${projectId}:${media.id}`}
             media={referenceMedia} assets={composerAssets} loadModels={loadGenerationModels}
             onSubmissionChange={setSubmission}
@@ -198,12 +202,7 @@ async function readMediaMetadata(file: File, kind: "image" | "video") {
 async function mediaRequest<T>(url: string, init: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (response.ok) return response.json() as Promise<T>;
-  let message = `${response.status} ${response.statusText}`;
-  try {
-    const body = await response.json() as { error?: { message?: string } | string };
-    message = typeof body.error === "string" ? body.error : body.error?.message ?? message;
-  } catch { /* retain HTTP status */ }
-  throw new Error(message);
+  throw new Error(await generationErrorMessage(response));
 }
 
 function messageOf(cause: unknown) {

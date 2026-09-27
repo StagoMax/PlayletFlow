@@ -430,6 +430,11 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
     monitorGeneration(storyboardId, itemId, mediaId, job);
     return job;
   }, [client, data.project.id, data.workspaces, monitorGeneration, objectMedia]);
+  const loadGenerationJob = useCallback((mediaId: string, jobId?: string | null, signal?: AbortSignal) =>
+    jobId
+      ? client.getGenerationJob(data.project.id, jobId, signal)
+      : workspaceObjectMediaClient.getLatestGenerationJob(data.project.id, mediaId, signal),
+  [client, data.project.id]);
   const value = useMemo(() => ({
     data,
     state,
@@ -456,8 +461,9 @@ export function WorkspaceProvider({ client, data: initialData, children }: Works
     moveNode,
     markObjectViewed,
     loadGenerationModels,
+    loadGenerationJob,
     generateMedia,
-  }), [commitAppliedProposal, createFolder, createObject, renameNode, deleteNode, copyNode, reorderNode, moveNode, markObjectViewed, createStoryboard, duplicateStoryboard, renameStoryboard, deleteStoryboard, reorderStoryboard, data, generateMedia, loadGenerationModels, objectMedia, publishObjectMedia, publishWorkspaceNodeMedia, refreshNavigationTree, refreshScript, saveScript, state]);
+  }), [commitAppliedProposal, createFolder, createObject, renameNode, deleteNode, copyNode, reorderNode, moveNode, markObjectViewed, createStoryboard, duplicateStoryboard, renameStoryboard, deleteStoryboard, reorderStoryboard, data, generateMedia, loadGenerationJob, loadGenerationModels, objectMedia, publishObjectMedia, publishWorkspaceNodeMedia, refreshNavigationTree, refreshScript, saveScript, state]);
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }
 
