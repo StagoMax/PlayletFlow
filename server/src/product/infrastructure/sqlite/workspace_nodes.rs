@@ -1,10 +1,17 @@
+#[path = "workspace_node_media.rs"]
+mod media_objects;
+#[path = "workspace_node_order.rs"]
+mod order;
+
 use super::support::{
     append_event, immediate, next_position, remember, replay, revision_error, time_from_row,
     uuid_from_row,
 };
 use super::ProductDatabase;
 use crate::product::application::workspace_nodes::{
-    CopyWorkspaceNode, CreateWorkspaceNode, DeleteWorkspaceNode, UpdateWorkspaceNode,
+    CopyWorkspaceNode, CreatePromptedMediaObject, CreateWorkspaceNode, DeleteWorkspaceNode,
+    MarkWorkspaceNodeViewed, ReorderWorkspaceNode, SaveWorkspaceObjectPrompt,
+    SavedWorkspaceObjectPrompt, UndoWorkspaceObjectPrompt, UpdateWorkspaceNode,
     WorkspaceNodeRepository,
 };
 use crate::product::domain::{
@@ -59,8 +66,42 @@ impl WorkspaceNodeRepository for SqliteWorkspaceNodeRepository {
             .await
     }
 
+    async fn create_prompted_media_object(
+        &self,
+        command: CreatePromptedMediaObject,
+    ) -> ProductResult<WorkspaceNode> {
+        self.run(move |connection| media_objects::create_prompted(connection, command))
+            .await
+    }
+
+    async fn save_object_prompt(
+        &self,
+        command: SaveWorkspaceObjectPrompt,
+    ) -> ProductResult<SavedWorkspaceObjectPrompt> {
+        self.run(move |connection| media_objects::save_prompt(connection, command))
+            .await
+    }
+
+    async fn undo_object_prompt(
+        &self,
+        command: UndoWorkspaceObjectPrompt,
+    ) -> ProductResult<SavedWorkspaceObjectPrompt> {
+        self.run(move |connection| media_objects::undo_prompt(connection, command))
+            .await
+    }
+
+    async fn mark_viewed(&self, command: MarkWorkspaceNodeViewed) -> ProductResult<WorkspaceNode> {
+        self.run(move |connection| mark_viewed(connection, command))
+            .await
+    }
+
     async fn update(&self, command: UpdateWorkspaceNode) -> ProductResult<WorkspaceNode> {
         self.run(move |connection| update(connection, command))
+            .await
+    }
+
+    async fn reorder(&self, command: ReorderWorkspaceNode) -> ProductResult<WorkspaceNode> {
+        self.run(move |connection| order::reorder(connection, command))
             .await
     }
 
@@ -82,7 +123,7 @@ fn list(
     ensure_storyboard(connection, project_id, storyboard_id)?;
     let mut statement = connection.prepare(
         "SELECT id, project_id, storyboard_id, parent_id, kind, name, object_type,
-                target_type, target_id, position, revision, created_at, updated_at
+                target_type, target_id, position, revision, created_at, updated_at, unseen_update_at
          FROM workspace_nodes
          WHERE project_id = ?1 AND storyboard_id = ?2
          ORDER BY position, id",
@@ -104,50 +145,7 @@ fn create(
     if let Some(value) = replay(&transaction, &command.idempotency)? {
         return Ok(value);
     }
-    ensure_storyboard(
-        &transaction,
-        command.node.project_id,
-        command.node.storyboard_id,
-    )?;
-    validate_parent(
-        &transaction,
-        command.node.project_id,
-        command.node.storyboard_id,
-        command.node.parent_id.as_deref(),
-    )?;
-    command.node.position = next_position(
-        &transaction,
-        "workspace_nodes",
-        "storyboard_id",
-        &command.node.storyboard_id.to_string(),
-    )?;
-    transaction.execute(
-        "INSERT INTO workspace_nodes
-         (id, project_id, storyboard_id, parent_id, kind, name, object_type, target_type,
-          target_id, position, revision, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
-        params![
-            command.node.id,
-            command.node.project_id.to_string(),
-            command.node.storyboard_id.to_string(),
-            command.node.parent_id,
-            command.node.kind.as_str(),
-            command.node.name,
-            command.node.object_type.map(WorkspaceObjectType::as_str),
-            command.node.target_type.map(WorkspaceTargetType::as_str),
-            command.node.target_id,
-            command.node.position,
-            command.node.revision,
-            command.node.created_at.to_rfc3339(),
-        ],
-    )?;
-    let node = load(
-        &transaction,
-        command.node.project_id,
-        command.node.storyboard_id,
-        &command.node.id,
-    )?
-    .ok_or(ProductError::NotFound)?;
+    let node = insert_new_node(&transaction, &mut command.node)?;
     append_event(
         &transaction,
         command.node.project_id,
@@ -157,6 +155,47 @@ fn create(
     remember(&transaction, &command.idempotency, &node)?;
     transaction.commit()?;
     Ok(node)
+}
+
+pub(super) fn insert_new_node(
+    transaction: &Transaction<'_>,
+    node: &mut WorkspaceNode,
+) -> ProductResult<WorkspaceNode> {
+    ensure_storyboard(transaction, node.project_id, node.storyboard_id)?;
+    validate_parent(
+        transaction,
+        node.project_id,
+        node.storyboard_id,
+        node.parent_id.as_deref(),
+    )?;
+    node.position = next_position(
+        transaction,
+        "workspace_nodes",
+        "storyboard_id",
+        &node.storyboard_id.to_string(),
+    )?;
+    transaction.execute(
+        "INSERT INTO workspace_nodes
+         (id, project_id, storyboard_id, parent_id, kind, name, object_type, target_type,
+          target_id, position, revision, created_at, updated_at, unseen_update_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?13)",
+        params![
+            node.id,
+            node.project_id.to_string(),
+            node.storyboard_id.to_string(),
+            node.parent_id,
+            node.kind.as_str(),
+            node.name,
+            node.object_type.map(WorkspaceObjectType::as_str),
+            node.target_type.map(WorkspaceTargetType::as_str),
+            node.target_id,
+            node.position,
+            node.revision,
+            node.created_at.to_rfc3339(),
+            node.unseen_update_at.map(|value| value.to_rfc3339()),
+        ],
+    )?;
+    load(transaction, node.project_id, node.storyboard_id, &node.id)?.ok_or(ProductError::NotFound)
 }
 
 fn update(
@@ -283,6 +322,43 @@ fn delete(connection: &mut Connection, command: DeleteWorkspaceNode) -> ProductR
     Ok(())
 }
 
+fn mark_viewed(
+    connection: &mut Connection,
+    command: MarkWorkspaceNodeViewed,
+) -> ProductResult<WorkspaceNode> {
+    let transaction = immediate(connection)?;
+    let current = load(
+        &transaction,
+        command.project_id,
+        command.storyboard_id,
+        &command.node_id,
+    )?
+    .ok_or(ProductError::NotFound)?;
+    if current
+        .unseen_update_at
+        .is_some_and(|updated_at| updated_at <= command.seen_through)
+    {
+        transaction.execute(
+            "UPDATE workspace_nodes SET unseen_update_at = NULL
+             WHERE id = ?1 AND project_id = ?2 AND storyboard_id = ?3",
+            params![
+                command.node_id,
+                command.project_id.to_string(),
+                command.storyboard_id.to_string(),
+            ],
+        )?;
+    }
+    let node = load(
+        &transaction,
+        command.project_id,
+        command.storyboard_id,
+        &command.node_id,
+    )?
+    .ok_or(ProductError::NotFound)?;
+    transaction.commit()?;
+    Ok(node)
+}
+
 fn copy(connection: &mut Connection, command: CopyWorkspaceNode) -> ProductResult<WorkspaceNode> {
     let transaction = immediate(connection)?;
     if let Some(saved) = replay::<WorkspaceNode>(&transaction, &command.idempotency)? {
@@ -407,7 +483,7 @@ fn copy_subtree(
     if source.kind == WorkspaceNodeKind::Folder {
         let mut statement = transaction.prepare(
             "SELECT id, project_id, storyboard_id, parent_id, kind, name, object_type,
-                    target_type, target_id, position, revision, created_at, updated_at
+                    target_type, target_id, position, revision, created_at, updated_at, unseen_update_at
              FROM workspace_nodes WHERE parent_id = ?1 ORDER BY position, id",
         )?;
         let children = statement
@@ -507,7 +583,7 @@ fn load(
     connection
         .query_row(
             "SELECT id, project_id, storyboard_id, parent_id, kind, name, object_type,
-                    target_type, target_id, position, revision, created_at, updated_at
+                    target_type, target_id, position, revision, created_at, updated_at, unseen_update_at
              FROM workspace_nodes
              WHERE id = ?1 AND project_id = ?2 AND storyboard_id = ?3",
             params![node_id, project_id.to_string(), storyboard_id.to_string()],
@@ -535,6 +611,16 @@ fn node_from_row(row: &Row<'_>) -> rusqlite::Result<WorkspaceNode> {
         revision: row.get(10)?,
         created_at: time_from_row(row, 11)?,
         updated_at: time_from_row(row, 12)?,
+        unseen_update_at: row
+            .get::<_, Option<String>>(13)?
+            .map(|value| {
+                chrono::DateTime::parse_from_rfc3339(&value)
+                    .map(|parsed| parsed.with_timezone(&Utc))
+                    .map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(13, Type::Text, Box::new(error))
+                    })
+            })
+            .transpose()?,
     })
 }
 

@@ -104,6 +104,8 @@ pub struct WorkspaceNode {
     pub revision: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub unseen_update_at: Option<DateTime<Utc>>,
 }
 
 impl WorkspaceNode {
@@ -128,6 +130,7 @@ impl WorkspaceNode {
             revision: 1,
             created_at: now,
             updated_at: now,
+            unseen_update_at: None,
         })
     }
 
@@ -153,6 +156,39 @@ impl WorkspaceNode {
             revision: 1,
             created_at: now,
             updated_at: now,
+            unseen_update_at: None,
+        })
+    }
+
+    pub fn media_object(
+        project_id: ProjectId,
+        storyboard_id: StoryboardId,
+        parent_id: Option<String>,
+        name: String,
+        object_type: WorkspaceObjectType,
+        now: DateTime<Utc>,
+    ) -> ProductResult<Self> {
+        if object_type == WorkspaceObjectType::Text {
+            return Err(ProductError::Validation(
+                "a prompted media object must be an image or video".to_owned(),
+            ));
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        Ok(Self {
+            id: id.clone(),
+            project_id,
+            storyboard_id,
+            parent_id,
+            kind: WorkspaceNodeKind::Object,
+            name: validate_name(name, MAX_WORKSPACE_NODE_NAME_CHARS, "workspace node")?,
+            object_type: Some(object_type),
+            target_type: Some(WorkspaceTargetType::Media),
+            target_id: Some(id),
+            position: String::new(),
+            revision: 1,
+            created_at: now,
+            updated_at: now,
+            unseen_update_at: None,
         })
     }
 }

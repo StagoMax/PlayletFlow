@@ -1,11 +1,16 @@
 use crate::product::api;
+use crate::product::application::workspace_nodes::{
+    SaveWorkspaceObjectPromptInput, WorkspaceNodeService,
+};
 use crate::product::domain::{ProjectId, StoryboardId};
+use crate::product::infrastructure::sqlite::SqliteWorkspaceNodeRepository;
 use crate::product::ProductDatabase;
 use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
 use chrono::Utc;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tower::ServiceExt;
 
 struct TestDatabase {
@@ -141,6 +146,161 @@ async fn persists_arbitrarily_deep_folders_and_rejects_cycles() {
     )
     .await;
     assert_eq!(cycle["error"]["code"], "WORKSPACE_NODE_CYCLE");
+}
+
+#[tokio::test]
+async fn viewing_ai_content_clears_only_the_update_that_was_displayed() {
+    let fixture = TestDatabase::new();
+    let router = fixture.router();
+    let uri = fixture.collection_uri();
+    let object = send_json(
+        &router,
+        Method::POST,
+        &uri,
+        Some("viewed-video"),
+        json!({ "parentId": null, "kind": "object", "name": "视频提示词", "objectType": "video" }),
+        StatusCode::CREATED,
+    )
+    .await;
+    let object_id = object["id"].as_str().unwrap();
+    let unseen_update = "2026-09-27T09:00:00Z";
+    fixture
+        .database
+        .connect()
+        .unwrap()
+        .execute(
+            "UPDATE workspace_nodes SET unseen_update_at = ?1 WHERE id = ?2",
+            rusqlite::params![unseen_update, object_id],
+        )
+        .unwrap();
+
+    let listed = send_json(
+        &router,
+        Method::GET,
+        &uri,
+        None,
+        Value::Null,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["id"] == object_id)
+            .unwrap()["unseenUpdateAt"],
+        unseen_update
+    );
+
+    let stale_view = send_json(
+        &router,
+        Method::PUT,
+        &format!("{uri}/{object_id}/viewed"),
+        None,
+        json!({ "seenThrough": "2026-09-27T08:59:59Z" }),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(stale_view["unseenUpdateAt"], unseen_update);
+
+    let viewed = send_json(
+        &router,
+        Method::PUT,
+        &format!("{uri}/{object_id}/viewed"),
+        None,
+        json!({ "seenThrough": unseen_update }),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(viewed["unseenUpdateAt"], Value::Null);
+
+    let replayed = send_json(
+        &router,
+        Method::PUT,
+        &format!("{uri}/{object_id}/viewed"),
+        None,
+        json!({ "seenThrough": unseen_update }),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(replayed["unseenUpdateAt"], Value::Null);
+}
+
+#[tokio::test]
+async fn ctrl_z_endpoint_restores_the_previous_agent_prompt() {
+    let fixture = TestDatabase::new();
+    let router = fixture.router();
+    let uri = fixture.collection_uri();
+    let object = send_json(
+        &router,
+        Method::POST,
+        &uri,
+        Some("prompt-history-video"),
+        json!({ "parentId": null, "kind": "object", "name": "镜头", "objectType": "video" }),
+        StatusCode::CREATED,
+    )
+    .await;
+    let object_id = object["id"].as_str().unwrap();
+    send_json(
+        &router,
+        Method::POST,
+        &format!("{uri}/{object_id}/media"),
+        None,
+        Value::Null,
+        StatusCode::OK,
+    )
+    .await;
+    fixture
+        .database
+        .connect()
+        .unwrap()
+        .execute(
+            "UPDATE media_items SET prompt = '旧提示词' WHERE id = ?1",
+            [object_id],
+        )
+        .unwrap();
+    let service = WorkspaceNodeService::new(Arc::new(SqliteWorkspaceNodeRepository::new(
+        fixture.database.clone(),
+    )));
+    service
+        .save_object_prompt(
+            SaveWorkspaceObjectPromptInput {
+                project_id: fixture.project_id,
+                storyboard_id: fixture.storyboard_id,
+                target_id: object_id.to_owned(),
+                prompt: "Agent 最新提示词".into(),
+                expected_revision: 1,
+            },
+            "agent-save".into(),
+        )
+        .await
+        .unwrap();
+
+    let restored = send_json(
+        &router,
+        Method::POST,
+        &format!("{uri}/{object_id}/prompt/undo"),
+        Some("ctrl-z-prompt"),
+        json!({ "expectedRevision": 2 }),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(restored["prompt"], "旧提示词");
+    assert_eq!(restored["revision"], 3);
+    assert_eq!(
+        fixture
+            .database
+            .connect()
+            .unwrap()
+            .query_row(
+                "SELECT prompt FROM media_items WHERE id = ?1",
+                [object_id],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+        "旧提示词"
+    );
 }
 
 #[tokio::test]
@@ -336,6 +496,122 @@ async fn script_node_and_its_folder_cannot_be_deleted_or_copied() {
     assert_eq!(nodes.as_array().unwrap().len(), 2);
 }
 
+#[tokio::test]
+async fn reorder_nodes_persists_cross_folder_order_and_rejects_cycles() {
+    let fixture = TestDatabase::new();
+    let router = fixture.router();
+    let uri = fixture.collection_uri();
+    let mut roots = Vec::new();
+    for (index, name) in ["资产", "脚本", "视频"].iter().enumerate() {
+        roots.push(
+            send_json(
+                &router,
+                Method::POST,
+                &uri,
+                Some(&format!("reorder-root-{index}")),
+                json!({ "parentId": null, "kind": "folder", "name": name }),
+                StatusCode::CREATED,
+            )
+            .await,
+        );
+    }
+    let first = roots[0]["id"].as_str().unwrap();
+    let last = roots[2]["id"].as_str().unwrap();
+    let changed = send_json(
+        &router,
+        Method::PATCH,
+        &format!("{uri}/{last}/order"),
+        None,
+        json!({ "beforeId": first, "afterId": null, "expectedRevision": 1 }),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(changed["revision"], 2);
+    let listed = send_json(
+        &router,
+        Method::GET,
+        &uri,
+        None,
+        Value::Null,
+        StatusCode::OK,
+    )
+    .await;
+    let names: Vec<_> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["视频", "资产", "脚本"]);
+
+    let child = send_json(
+        &router,
+        Method::POST,
+        &uri,
+        Some("reorder-child"),
+        json!({ "parentId": first, "kind": "object", "name": "封面", "objectType": "image" }),
+        StatusCode::CREATED,
+    )
+    .await;
+    let moved = send_json(
+        &router,
+        Method::PATCH,
+        &format!("{uri}/{last}/order"),
+        None,
+        json!({ "beforeId": child["id"], "afterId": null, "expectedRevision": 2 }),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(moved["parentId"], first);
+    let listed = send_json(
+        &router,
+        Method::GET,
+        &uri,
+        None,
+        Value::Null,
+        StatusCode::OK,
+    )
+    .await;
+    let child_order: Vec<_> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|node| node["parentId"] == first)
+        .map(|node| node["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(child_order, ["视频", "封面"]);
+
+    let descendant = send_json(
+        &router,
+        Method::POST,
+        &uri,
+        Some("reorder-descendant"),
+        json!({ "parentId": last, "kind": "folder", "name": "子目录" }),
+        StatusCode::CREATED,
+    )
+    .await;
+    let invalid = send_json(
+        &router,
+        Method::PATCH,
+        &format!("{uri}/{last}/order"),
+        None,
+        json!({ "beforeId": descendant["id"], "afterId": null, "expectedRevision": 3 }),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    assert_eq!(invalid["error"]["code"], "WORKSPACE_NODE_CYCLE");
+    let stale = send_json(
+        &router,
+        Method::PATCH,
+        &format!("{uri}/{last}/order"),
+        None,
+        json!({ "beforeId": null, "afterId": first, "expectedRevision": 1 }),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    assert_eq!(stale["error"]["code"], "REVISION_CONFLICT");
+}
+
 async fn send_json(
     router: &axum::Router,
     method: Method,
@@ -357,7 +633,13 @@ async fn send_json(
             .unwrap()
     };
     let response = router.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), expected_status, "{uri}");
+    let status = response.status();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(
+        status,
+        expected_status,
+        "{uri}: {}",
+        String::from_utf8_lossy(&bytes)
+    );
     serde_json::from_slice(&bytes).unwrap()
 }

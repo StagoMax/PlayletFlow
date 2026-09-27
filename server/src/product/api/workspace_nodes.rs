@@ -1,6 +1,8 @@
 use crate::product::api::error::ProductApiError;
 use crate::product::application::workspace_nodes::{
-    CreateWorkspaceNodeInput, DeleteWorkspaceNode, UpdateWorkspaceNode, WorkspaceNodeService,
+    CreateWorkspaceNodeInput, DeleteWorkspaceNode, MarkWorkspaceNodeViewed, ReorderWorkspaceNode,
+    SavedWorkspaceObjectPrompt, UndoWorkspaceObjectPromptInput, UpdateWorkspaceNode,
+    WorkspaceNodeService,
 };
 use crate::product::domain::{
     ProjectId, StoryboardId, WorkspaceNode, WorkspaceNodeKind, WorkspaceObjectType,
@@ -8,7 +10,7 @@ use crate::product::domain::{
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, patch, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -37,7 +39,27 @@ struct UpdateWorkspaceNodeRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReorderWorkspaceNodeRequest {
+    before_id: Option<String>,
+    after_id: Option<String>,
+    expected_revision: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DeleteWorkspaceNodeQuery {
+    expected_revision: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MarkWorkspaceNodeViewedRequest {
+    seen_through: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UndoWorkspaceObjectPromptRequest {
     expected_revision: i64,
 }
 
@@ -56,6 +78,18 @@ pub(super) fn router(service: WorkspaceNodeService) -> Router {
         .route(
             "/api/v1/projects/:project_id/storyboards/:storyboard_id/workspace-nodes/:node_id/copies",
             post(copy_node),
+        )
+        .route(
+            "/api/v1/projects/:project_id/storyboards/:storyboard_id/workspace-nodes/:node_id/order",
+            patch(reorder_node),
+        )
+        .route(
+            "/api/v1/projects/:project_id/storyboards/:storyboard_id/workspace-nodes/:node_id/viewed",
+            put(mark_node_viewed),
+        )
+        .route(
+            "/api/v1/projects/:project_id/storyboards/:storyboard_id/workspace-nodes/:node_id/prompt/undo",
+            post(undo_object_prompt),
         )
         .with_state(WorkspaceNodeApiState { service })
 }
@@ -138,6 +172,27 @@ async fn delete_node(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn reorder_node(
+    State(state): State<WorkspaceNodeApiState>,
+    Path((project_id, storyboard_id, node_id)): Path<(String, String, String)>,
+    payload: Result<Json<ReorderWorkspaceNodeRequest>, JsonRejection>,
+) -> ApiResult<Json<WorkspaceNode>> {
+    let Json(payload) = payload.map_err(ProductApiError::from_json_rejection)?;
+    Ok(Json(
+        state
+            .service
+            .reorder(ReorderWorkspaceNode {
+                project_id: parse_project_id(&project_id)?,
+                storyboard_id: parse_storyboard_id(&storyboard_id)?,
+                node_id: validate_node_id(node_id)?,
+                before_id: normalize_parent_id(payload.before_id)?,
+                after_id: normalize_parent_id(payload.after_id)?,
+                expected_revision: payload.expected_revision,
+            })
+            .await?,
+    ))
+}
+
 async fn copy_node(
     State(state): State<WorkspaceNodeApiState>,
     Path((project_id, storyboard_id, node_id)): Path<(String, String, String)>,
@@ -153,6 +208,48 @@ async fn copy_node(
         )
         .await?;
     Ok((StatusCode::CREATED, Json(node)))
+}
+
+async fn mark_node_viewed(
+    State(state): State<WorkspaceNodeApiState>,
+    Path((project_id, storyboard_id, node_id)): Path<(String, String, String)>,
+    payload: Result<Json<MarkWorkspaceNodeViewedRequest>, JsonRejection>,
+) -> ApiResult<Json<WorkspaceNode>> {
+    let Json(payload) = payload.map_err(ProductApiError::from_json_rejection)?;
+    Ok(Json(
+        state
+            .service
+            .mark_viewed(MarkWorkspaceNodeViewed {
+                project_id: parse_project_id(&project_id)?,
+                storyboard_id: parse_storyboard_id(&storyboard_id)?,
+                node_id: validate_node_id(node_id)?,
+                seen_through: payload.seen_through,
+            })
+            .await?,
+    ))
+}
+
+async fn undo_object_prompt(
+    State(state): State<WorkspaceNodeApiState>,
+    Path((project_id, storyboard_id, node_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    payload: Result<Json<UndoWorkspaceObjectPromptRequest>, JsonRejection>,
+) -> ApiResult<Json<SavedWorkspaceObjectPrompt>> {
+    let Json(payload) = payload.map_err(ProductApiError::from_json_rejection)?;
+    Ok(Json(
+        state
+            .service
+            .undo_object_prompt(
+                UndoWorkspaceObjectPromptInput {
+                    project_id: parse_project_id(&project_id)?,
+                    storyboard_id: parse_storyboard_id(&storyboard_id)?,
+                    target_id: validate_node_id(node_id)?,
+                    expected_revision: payload.expected_revision,
+                },
+                idempotency_key(&headers)?,
+            )
+            .await?,
+    ))
 }
 
 fn idempotency_key(headers: &HeaderMap) -> ApiResult<String> {

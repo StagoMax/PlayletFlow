@@ -10,8 +10,8 @@ mod storyboard_order;
 mod storyboard_storage;
 mod storyboards;
 mod support;
-mod workspace_nodes;
 mod workspace_media;
+mod workspace_nodes;
 mod workspace_threads;
 
 #[cfg(test)]
@@ -26,8 +26,8 @@ pub use generation::SqliteGenerationRepository;
 pub use media::SqliteMediaRepository;
 pub use proposals::SqliteProposalRepository;
 pub use storyboards::SqliteStoryboardRepository;
-pub use workspace_nodes::SqliteWorkspaceNodeRepository;
 pub use workspace_media::SqliteWorkspaceMediaRepository;
+pub use workspace_nodes::SqliteWorkspaceNodeRepository;
 pub use workspace_threads::SqliteWorkspaceThreadStore;
 
 use crate::product::domain::ProductResult;

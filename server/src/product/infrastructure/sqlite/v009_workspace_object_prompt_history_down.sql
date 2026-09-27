@@ -1,0 +1,1 @@
+DROP TABLE workspace_object_prompt_history;

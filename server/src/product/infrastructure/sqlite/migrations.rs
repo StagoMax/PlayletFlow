@@ -59,6 +59,20 @@ const MIGRATIONS: &[Migration] = &[
         #[cfg(test)]
         down: include_str!("v007_restore_storyboard_script_nodes_down.sql"),
     },
+    Migration {
+        version: 8,
+        name: "workspace_node_unseen_updates",
+        up: include_str!("v008_workspace_node_unseen_updates.sql"),
+        #[cfg(test)]
+        down: include_str!("v008_workspace_node_unseen_updates_down.sql"),
+    },
+    Migration {
+        version: 9,
+        name: "workspace_object_prompt_history",
+        up: include_str!("v009_workspace_object_prompt_history.sql"),
+        #[cfg(test)]
+        down: include_str!("v009_workspace_object_prompt_history_down.sql"),
+    },
 ];
 
 pub fn apply_all(connection: &mut Connection) -> ProductResult<()> {
@@ -155,6 +169,7 @@ mod tests {
             "generation_jobs",
             "workspace_thread_bindings",
             "workspace_nodes",
+            "workspace_object_prompt_history",
             "product_outbox_events",
             "idempotency_records",
         ] {
@@ -169,7 +184,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(applied, 7);
+        assert_eq!(applied, 9);
 
         rollback_all(&mut connection).expect("roll back schema");
         assert!(!table_exists(&connection, "projects"));
