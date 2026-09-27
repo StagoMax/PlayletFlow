@@ -7,7 +7,7 @@ import type {
 } from "../productApi/generated";
 import type { WorkspaceGenerationJob } from "../workspace/workspaceClient";
 import type { GenerationImageFile } from "./generationOptions";
-import { blobBase64, prepareImageBlob } from "./imageInput";
+import { blobBase64, fitGenerationImageBlob, prepareImageBlob } from "./imageInput";
 
 type InputPayload = {
   mediaId: string;
@@ -73,18 +73,19 @@ async function inputPayloads(
   signal?: AbortSignal,
 ): Promise<InputPayload[]> {
   const ids = selectedInputIds(generation);
+  const byteBudget = Math.min(8 * 1024 * 1024, Math.floor(18 * 1024 * 1024 / Math.max(1, ids.length)));
   const byId = new Map(availableMedia.map((media) => [media.id, media]));
   const filesById = new Map(imageFiles.map((item) => [item.id, item.file]));
   return Promise.all(ids.map(async (mediaId) => {
     const file = filesById.get(mediaId);
-    if (file) return encodedInput(mediaId, await prepareImageBlob(file, signal));
+    if (file) return encodedInput(mediaId, await fitGenerationImageBlob(await prepareImageBlob(file, signal), byteBudget, signal));
     const media = byId.get(mediaId);
     if (!media || media.kind !== "image" || media.status !== "ready") {
       throw new Error("所选首尾帧或关键帧当前不可用。");
     }
     const url = media.preview?.url ?? media.thumbnail?.url;
     if (!url) throw new Error("所选参考图片没有可读取的预览地址。");
-    return encodedInput(mediaId, await supportedImageBlob(url, media.mimeType, signal));
+    return encodedInput(mediaId, await fitGenerationImageBlob(await supportedImageBlob(url, media.mimeType, signal), byteBudget, signal));
   }));
 }
 
